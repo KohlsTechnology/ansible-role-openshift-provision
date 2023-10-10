@@ -1294,6 +1294,8 @@ class OpenShiftProvision:
     def compare_resource(self, resource, compare_to=None):
         if compare_to == None:
             compare_to = self.resource
+        resource = copy.deepcopy(resource)
+        compare_to = copy.deepcopy(compare_to)
 
         config = self.normalize_resource(compare_to)
         current = self.normalize_resource(resource)
@@ -1488,9 +1490,6 @@ class OpenShiftProvision:
             if self.action == 'apply':
                 merge_dict(resource, {
                     'metadata': {
-                        'annotations': {
-                            'kubectl.kubernetes.io/last-applied-configuration': current_last_applied_configuration
-                        },
                         'resourceVersion': current_resource_version
                     }
                 })
