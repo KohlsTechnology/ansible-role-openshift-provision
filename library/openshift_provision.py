@@ -1487,7 +1487,7 @@ class OpenShiftProvision:
             self.run_oc(command, data=json.dumps(self.resource), check_rc=True)
         else: # apply, create, delete, replace
             resource = copy.deepcopy(self.resource)
-            if self.action == 'apply':
+            if self.action == 'apply' and current_resource_version:
                 merge_dict(resource, {
                     'metadata': {
                         'resourceVersion': current_resource_version
