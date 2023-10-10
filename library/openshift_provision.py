@@ -1111,7 +1111,10 @@ class OpenShiftProvision:
         (rc, stdout, stderr) = self.module.run_command(self.oc_cmd + args, **kwargs)
 
         if rc != 0 and check_rc:
-            self.module.fail_json(cmd=args, rc=rc, stdout=stdout, stderr=stderr, msg=stderr)
+            self.module.fail_json(
+                cmd=args, rc=rc, stdout=stdout, stderr=stderr, msg=stderr,
+                resource=self.resource, current_resource_version=self.current_resource_version
+            )
 
         return (rc, stdout, stderr)
 
