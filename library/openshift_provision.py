@@ -1553,7 +1553,8 @@ def run_module():
             action=provisioner.action,
             traceback=traceback.format_exc().split('\n'),
             resource=provisioner.resource,
-            current_resource_version=provisioner.current_resource_version
+            current_resource_version=str(provisioner.current_resource_version or None),
+            jontest="Jon Test"
         )
 
     module.exit_json(
@@ -1561,7 +1562,8 @@ def run_module():
         changed=provisioner.changed,
         patch=provisioner.patch,
         resource=provisioner.resource,
-        current_resource_version=provisioner.current_resource_version
+        current_resource_version=str(provisioner.current_resource_version or None),
+        jontest="Jon Test"
     )
 
 def main():
