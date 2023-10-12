@@ -1122,7 +1122,9 @@ class OpenShiftProvision:
         command = ['get', self.resource['kind'], self.resource['metadata']['name'], '-o', 'json']
         if self.namespace:
             command += ['-n', self.namespace]
+        print("THIS IS THE COMMAND {}".format(" ".join(command)))
         (rc, stdout, stderr) = self.run_oc(command, check_rc=False)
+        print("THIS IS THE STDOUT {}".format(stdout))
         if rc != 0:
             return None
         resource = json.loads(stdout)
@@ -1297,8 +1299,6 @@ class OpenShiftProvision:
     def compare_resource(self, resource, compare_to=None):
         if compare_to == None:
             compare_to = self.resource
-        resource = copy.deepcopy(resource)
-        compare_to = copy.deepcopy(compare_to)
 
         config = self.normalize_resource(compare_to)
         current = self.normalize_resource(resource)
