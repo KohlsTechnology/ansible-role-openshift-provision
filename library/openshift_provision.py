@@ -1122,9 +1122,9 @@ class OpenShiftProvision:
         command = ['get', self.resource['kind'], self.resource['metadata']['name'], '-o', 'json']
         if self.namespace:
             command += ['-n', self.namespace]
-        print("THIS IS THE COMMAND {}".format(" ".join(command)))
         (rc, stdout, stderr) = self.run_oc(command, check_rc=False)
-        print("THIS IS THE STDOUT {}".format(stdout))
+        if self.resource['kind'] == "CertManager" and self.resource['metadata']['name'] == "cluster":
+            print("Resource stdout: {}".format(stdout))
         if rc != 0:
             return None
         resource = json.loads(stdout)
