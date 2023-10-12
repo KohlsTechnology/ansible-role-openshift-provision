@@ -1111,7 +1111,10 @@ class OpenShiftProvision:
         (rc, stdout, stderr) = self.module.run_command(self.oc_cmd + args, **kwargs)
 
         if rc != 0 and check_rc:
-            self.module.fail_json(cmd=args, rc=rc, stdout=stdout, stderr=stderr, msg=stderr)
+            self.module.fail_json(
+                cmd=args, rc=rc, stdout=stdout, stderr=stderr, msg=stderr,
+                resource=self.resource, current_resource_version=self.current_resource_version
+            )
 
         return (rc, stdout, stderr)
 
@@ -1120,6 +1123,8 @@ class OpenShiftProvision:
         if self.namespace:
             command += ['-n', self.namespace]
         (rc, stdout, stderr) = self.run_oc(command, check_rc=False)
+        if self.resource['kind'] == "CertManager" and self.resource['metadata']['name'] == "cluster":
+            print("Resource stdout: {}".format(stdout))
         if rc != 0:
             return None
         resource = json.loads(stdout)
@@ -1386,23 +1391,11 @@ class OpenShiftProvision:
 
         metadata = resource.get('metadata', {})
         resource_version = metadata \
-            .get('resourceVersion', None)
+            .pop('resourceVersion', None)
         last_applied_configuration = metadata \
             .get('annotations', {}) \
-            .get('kubectl.kubernetes.io/last-applied-configuration', None)
+            .pop('kubectl.kubernetes.io/last-applied-configuration', None)
         return resource_version, last_applied_configuration
-
-    def set_resource_version_and_last_applied_configuration(self, resource_version, last_applied_configuration):
-        if not resource_version or not last_applied_configuration:
-            return
-        merge_dict(self.resource, {
-            'metadata': {
-                'annotations': {
-                    'kubectl.kubernetes.io/last-applied-configuration': last_applied_configuration
-                },
-                'resourceVersion': resource_version
-            }
-        }, overwrite=True)
 
     def provision(self):
         current_resource = self.get_current_resource()
@@ -1410,6 +1403,7 @@ class OpenShiftProvision:
             self.get_resource_version_and_last_applied_configuration(current_resource)
         if current_resource and self.action in ['apply', 'replace']:
             self.set_dynamic_values(current_resource)
+        self.current_resource_version = current_resource_version
 
         # Check if changes are required and if we need to reset the apply metadata.
         reset_last_applied_configuration = False
@@ -1495,17 +1489,19 @@ class OpenShiftProvision:
                 command += ['-n', self.namespace]
             self.run_oc(command, data=json.dumps(self.resource), check_rc=True)
         else: # apply, create, delete, replace
-            if self.action == 'apply':
-                self.set_resource_version_and_last_applied_configuration(
-                    current_resource_version,
-                    current_last_applied_configuration
-                )
+            resource = copy.deepcopy(self.resource)
+            if self.action == 'apply' and current_resource_version:
+                merge_dict(resource, {
+                    'metadata': {
+                        'resourceVersion': current_resource_version
+                    }
+                })
             command = [self.action, '-f', '-']
             if self.namespace:
                 command += ['-n', self.namespace]
             if reset_last_applied_configuration:
                 command += ['--save-config']
-            self.run_oc(command, data=json.dumps(self.resource), check_rc=True)
+            self.run_oc(command, data=json.dumps(resource), check_rc=True)
 
 def run_module():
     module_args = {
@@ -1559,14 +1555,18 @@ def run_module():
             msg=str(e),
             action=provisioner.action,
             traceback=traceback.format_exc().split('\n'),
-            resource=provisioner.resource
+            resource=provisioner.resource,
+            current_resource_version=str(provisioner.current_resource_version or None),
+            jontest="Jon Test"
         )
 
     module.exit_json(
         action=provisioner.action,
         changed=provisioner.changed,
         patch=provisioner.patch,
-        resource=provisioner.resource
+        resource=provisioner.resource,
+        current_resource_version=str(provisioner.current_resource_version or None),
+        jontest="Jon Test"
     )
 
 def main():
