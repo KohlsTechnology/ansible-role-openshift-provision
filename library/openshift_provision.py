@@ -1115,8 +1115,14 @@ class OpenShiftProvision:
 
         return (rc, stdout, stderr)
 
+    def get_grouped_kind(self):
+        if '/' in self.resource['apiVersion']:
+            return self.resource['kind'] + '.' + self.resource['apiVersion'].split('/')[0]
+        else:
+            return self.resource['kind']
+
     def get_current_resource(self):
-        command = ['get', self.resource['kind'], self.resource['metadata']['name'], '-o', 'json']
+        command = ['get', self.get_grouped_kind(), self.resource['metadata']['name'], '-o', 'json']
         if self.namespace:
             command += ['-n', self.namespace]
         (rc, stdout, stderr) = self.run_oc(command, check_rc=False)
