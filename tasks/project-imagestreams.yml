@@ -10,12 +10,10 @@
 - name: Create imagestreams in {{ project.name }}
   command: >-
     {% if ansible_check_mode %}echo{% endif %}
-    {{ oc_cmd }} create imagestream {{ imagestream }} -n {{ project.name }}
-  with_items: "{{ project.imagestreams | default([]) }}"
-  loop_control:
-    loop_var: imagestream
+    {{ oc_cmd }} create imagestream {{ item }} -n {{ project.name }}
+  loop: "{{ project.imagestreams | default([]) }}"
   vars:
-    imagestream_query: "items[?metadata.name=='{{ imagestream }}']|[0]"
+    imagestream_query: "items[?metadata.name=='{{ item }}']|[0]"
     current_imagestream: >-
       {{ get_imagestreams.stdout | from_json | json_query(imagestream_query) }}
   when: >-

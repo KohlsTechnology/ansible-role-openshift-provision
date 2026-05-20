@@ -9,24 +9,22 @@
     {% else %}
     {{ role_binding.role }}
     {% endif %}
-    {{ user }}
+    {{ item }}
     {% if openshift_provision_openshift_version is version_compare('v3.9', '>=') %}
     --rolebinding-name={{ role_binding.role | replace('/', '-') }}
     {% endif %}
-  with_items: "{{ role_binding.users | default([]) }}"
-  loop_control:
-    loop_var: user
+  loop: "{{ role_binding.users | default([]) }}"
   when: >-
     (
-      user is match('system:serviceaccount:') and
+      item is match('system:serviceaccount:') and
       {
         'kind': 'ServiceAccount',
-        'name': user.split(':')[3],
-        'namespace': user.split(':')[2]
+        'name': item.split(':')[3],
+        'namespace': item.split(':')[2]
       } not in current_role_service_accounts
     ) or (
-      user is not match('system:serviceaccount:') and
-      user not in current_role_users
+      item is not match('system:serviceaccount:') and
+      item not in current_role_users
     )
   check_mode: false
   register: command
@@ -43,15 +41,13 @@
     {% else %}
     {{ role_binding.role }}
     {% endif %}
-    {{ group }}
+    {{ item }}
     {% if openshift_provision_openshift_version is version_compare('v3.9', '>=') %}
     --rolebinding-name={{ role_binding.role | replace('/', '-') }}
     {% endif %}
-  with_items: "{{ role_binding.groups | default([]) }}"
-  loop_control:
-    loop_var: group
+  loop: "{{ role_binding.groups | default([]) }}"
   when: >
-    group not in current_role_groups
+    item not in current_role_groups
   check_mode: false
   register: command
   changed_when: >-
@@ -67,14 +63,12 @@
     {% else %}
     {{ role_binding.role }}
     {% endif %}
-    {{ user }}
-  with_items: "{{ current_role_users }}"
-  loop_control:
-    loop_var: user
+    {{ item }}
+  loop: "{{ current_role_users }}"
   when: >
     ( role_binding.remove_unlisted | default(false) | bool or
       role_binding.remove_unlisted_users | default(false) | bool ) and
-    user not in role_binding.users | default([])
+    item not in role_binding.users | default([])
   check_mode: false
   register: command
   changed_when: >-
@@ -91,12 +85,10 @@
     {{ role_binding.role }}
     {% endif %}
     {{ service_account_string }}
-  with_items: "{{ current_role_service_accounts }}"
-  loop_control:
-    loop_var: service_account
+  loop: "{{ current_role_service_accounts }}"
   vars:
     service_account_string: >-
-      system:serviceaccount:{{ service_account.namespace }}:{{ service_account.name }}
+      system:serviceaccount:{{ item.namespace }}:{{ item.name }}
   when: >
     ( role_binding.remove_unlisted | default(false) | bool or
       role_binding.remove_unlisted_users | default(false) | bool ) and
@@ -116,14 +108,12 @@
     {% else %}
     {{ role_binding.role }}
     {% endif %}
-    {{ group }}
-  with_items: "{{ current_role_groups }}"
-  loop_control:
-    loop_var: group
+    {{ item }}
+  loop: "{{ current_role_groups }}"
   when: >
     ( role_binding.remove_unlisted | default(false) | bool or
       role_binding.remove_unlisted_groups | default(false) | bool ) and
-    group not in role_binding.groups | default([])
+    item not in role_binding.groups | default([])
   check_mode: false
   register: command
   changed_when: >-

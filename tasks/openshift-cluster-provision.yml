@@ -14,39 +14,37 @@
 
   - name: Handle cluster_resources
     include_tasks: cluster-resources.yml
-    with_items: "{{ openshift_cluster.cluster_resources | default([]) }}"
+    loop: "{{ openshift_cluster.cluster_resources | default([]) }}"
     vars:
       resource_path: "{{ openshift_cluster.resource_path | default(openshift_resource_path) }}"
       resource_list: >-
-        {%- if resource_item is mapping -%}
-        {{ [resource_item] }}
+        {%- if item is mapping -%}
+        {{ [item] }}
         {%- else -%}
         {{ lookup(
-            'template' if resource_item.endswith('.j2') else 'file',
-            lookup('first_found', {'files':resource_item, 'paths': resource_path})
+            'template' if item.endswith('.j2') else 'file',
+            lookup('first_found', {'files':item, 'paths': resource_path})
           ) | yaml_to_resource_list
         }}
         {%- endif -%}
-    loop_control:
-      loop_var: resource_item
 
   - name: Handle cluster process_templates
     include_tasks: process-template.yml
-    with_items: "{{ openshift_cluster.process_templates | default([]) }}"
-    loop_control:
-      loop_var: template
+    loop: "{{ openshift_cluster.process_templates | default([]) }}"
+    vars:
+      template: "{{ item }}"
 
   - name: Handle cluster helm_charts
     include_tasks: helm-chart.yml
-    with_items: "{{ openshift_cluster.helm_charts | default([]) }}"
-    loop_control:
-      loop_var: helm_chart
+    loop: "{{ openshift_cluster.helm_charts | default([]) }}"
+    vars:
+      helm_chart: "{{ item }}"
 
   - name: Handle groups
     include_tasks: group.yml
-    with_items: "{{ openshift_cluster.groups | default([]) }}"
-    loop_control:
-      loop_var: group
+    loop: "{{ openshift_cluster.groups | default([]) }}"
+    vars:
+      group: "{{ item }}"
 
   - name: Handle cluster_role_bindings
     include_tasks: cluster-role-bindings.yml
@@ -54,10 +52,9 @@
 
   - name: Handle projects
     include_tasks: project.yml
-    with_items: "{{ openshift_cluster.projects | default([]) }}"
-    loop_control:
-      loop_var: project
+    loop: "{{ openshift_cluster.projects | default([]) }}"
     vars:
+      project: "{{ item }}"
       cluster_resource_path: "{{ openshift_cluster.resource_path | default(openshift_resource_path) }}"
 
   - name: Check for failures

@@ -105,9 +105,7 @@
     {% if ansible_check_mode %}echo{% endif %}
     {{ oc_cmd }} patch namespace {{ project.name | quote }}
     --type=json -o json -p {{ remove | to_json | quote }}
-  with_items: "{{ current_annotations }}"
-  loop_control:
-    loop_var: annotation
+  loop: "{{ current_annotations }}"
   vars:
     current_annotations: >-
       {{
@@ -122,7 +120,7 @@
   when: >
     ( project.remove_unlisted | default(false) | bool or
       project.remove_unlisted_annotations | default(false) | bool ) and
-    annotation not in project.annotations | default({})
+    item not in project.annotations | default({})
   check_mode: false
   register: command
   changed_when: >-
@@ -160,9 +158,7 @@
     {% if ansible_check_mode %}echo{% endif %}
     {{ oc_cmd }} patch namespace {{ project.name | quote }}
     --type=json -o json -p {{ remove | to_json | quote }}
-  with_items: "{{ current_labels }}"
-  loop_control:
-    loop_var: label
+  loop: "{{ current_labels }}"
   vars:
     current_labels: >-
       {{
@@ -177,7 +173,7 @@
   when: >
     ( project.remove_unlisted | default(false) | bool or
       project.remove_unlisted_labels | default(false) | bool ) and
-    label not in project.labels | default({})
+    item not in project.labels | default({})
   check_mode: false
   register: command
   changed_when: >-
@@ -240,37 +236,35 @@
 
 - name: Handle project resources for {{ project.name }}
   include_tasks: project-resources.yml
-  with_items: "{{ project.resources | default([]) }}"
+  loop: "{{ project.resources | default([]) }}"
   vars:
     resource_path: "{{ project.resource_path | default(cluster_resource_path) }}"
     resource_list: >-
-      {%- if resource_item is mapping -%}
-      {{ [resource_item] }}
+      {%- if item is mapping -%}
+      {{ [item] }}
       {%- else -%}
       {{ lookup(
-           'template' if resource_item.endswith('.j2') else 'file',
-           lookup('first_found', {'files':resource_item, 'paths': resource_path})
+           'template' if item.endswith('.j2') else 'file',
+           lookup('first_found', {'files':item, 'paths': resource_path})
          ) | yaml_to_resource_list
       }}
       {%- endif -%}
-  loop_control:
-    loop_var: resource_item
 
 - name: Handle project templates
   include_tasks: process-template.yml
   # Allow "process_templates" to also be specified as "templates" for
   # compatibility with ansible-stacks.
-  with_items: >
+  loop: >
     {{
     project.process_templates
     | default([])
     | union( project.templates | default([]) )
     }}
-  loop_control:
-    loop_var: template
+  vars:
+    template: "{{ item }}"
 
 - name: Handle project helm_charts
   include_tasks: helm-chart.yml
-  with_items: "{{ project.helm_charts | default([]) }}"
-  loop_control:
-    loop_var: helm_chart
+  loop: "{{ project.helm_charts | default([]) }}"
+  vars:
+    helm_chart: "{{ item }}"
