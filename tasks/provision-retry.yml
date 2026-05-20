@@ -31,12 +31,8 @@
       provision_failures: []
   - name: Record new failures
     set_fact:
-      provision_failures: "{{ provision_failures + [item.provision_failure] }}"
+      provision_failures: "{{ provision_failures + [item] }}"
     loop: "{{ provision_retry_status.results }}"
-    vars:
-      provision_failure: "{{ item.provision_failure }}"
-      provision_args: "{{ item.provision_failure.invocation.module_args | default({}, true) }}"
-      provision_resource: "{{ item.provision_failure.resource | default({}, true) }}"
     when: item.failed | default(false, true)
 
   - name: Check for failures
