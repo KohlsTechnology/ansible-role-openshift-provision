@@ -2,6 +2,8 @@ import re
 import yaml
 
 def yaml_to_resource_list(value):
+    if value is None or value == '':
+        return []
     resource_list = []
     for yaml_doc in value.split("\n---\n"):
         resource = yaml.load(yaml_doc, Loader=yaml.Loader)
