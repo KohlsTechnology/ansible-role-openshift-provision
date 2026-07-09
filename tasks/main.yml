@@ -9,8 +9,9 @@
     {{ openshift_clusters
      | default([openshift_provision] if openshift_provision is defined else [])
     }}
+  loop_control:
+    loop_var: openshift_cluster
   vars:
-    openshift_cluster: "{{ item }}"
     change_record: >-
       {{ openshift_cluster.change_record
        | default(openshift_provision_change_record)

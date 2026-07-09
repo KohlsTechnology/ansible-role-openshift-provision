@@ -15,15 +15,17 @@
   - name: Handle cluster_resources
     include_tasks: cluster-resources.yml
     loop: "{{ openshift_cluster.cluster_resources | default([]) }}"
+    loop_control:
+      loop_var: cluster_resource
     vars:
       resource_path: "{{ openshift_cluster.resource_path | default(openshift_resource_path) }}"
       resource_list: >-
-        {%- if item is mapping -%}
-        {{ [item] }}
+        {%- if cluster_resource is mapping -%}
+        {{ [cluster_resource] }}
         {%- else -%}
         {{ lookup(
-            'template' if item.endswith('.j2') else 'file',
-            lookup('first_found', {'files':item, 'paths': resource_path})
+            'template' if cluster_resource.endswith('.j2') else 'file',
+            lookup('first_found', {'files':cluster_resource, 'paths': resource_path})
           ) | yaml_to_resource_list
         }}
         {%- endif -%}
@@ -31,20 +33,20 @@
   - name: Handle cluster process_templates
     include_tasks: process-template.yml
     loop: "{{ openshift_cluster.process_templates | default([]) }}"
-    vars:
-      template: "{{ item }}"
+    loop_control:
+      loop_var: template
 
   - name: Handle cluster helm_charts
     include_tasks: helm-chart.yml
     loop: "{{ openshift_cluster.helm_charts | default([]) }}"
-    vars:
-      helm_chart: "{{ item }}"
+    loop_control:
+      loop_var: helm_chart
 
   - name: Handle groups
     include_tasks: group.yml
     loop: "{{ openshift_cluster.groups | default([]) }}"
-    vars:
-      group: "{{ item }}"
+    loop_control:
+      loop_var: group
 
   - name: Handle cluster_role_bindings
     include_tasks: cluster-role-bindings.yml
@@ -53,13 +55,15 @@
   - name: Handle projects
     include_tasks: project.yml
     loop: "{{ openshift_cluster.projects | default([]) }}"
+    loop_control:
+      loop_var: project
     vars:
-      project: "{{ item }}"
       cluster_resource_path: "{{ openshift_cluster.resource_path | default(openshift_resource_path) }}"
 
   - name: Check for failures
     fail:
-      msg: "{{ provision_failures }}"
+      msg: >-
+        {{ provision_failures | map(attribute='msg') | list | join('\n---\n') }}
     when: provision_failures | length > 0
 
   rescue:
@@ -73,5 +77,6 @@
   always:
   - name: Check unhandled failures
     fail:
-      msg: "{{ provision_failures_skipped }}"
+      msg: >-
+        {{ provision_failures_skipped | map(attribute='msg') | list | join('\n---\n') }}
     when: provision_failures_skipped | length > 0

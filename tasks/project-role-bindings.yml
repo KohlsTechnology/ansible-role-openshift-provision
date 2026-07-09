@@ -10,8 +10,9 @@
 - name: Handle project role_bindings
   include_tasks: project-role-binding.yml
   loop: "{{ project.role_bindings | default([]) }}"
+  loop_control:
+    loop_var: role_binding
   vars:
-    role_binding: "{{ item }}"
     current_role_bindings: >-
       {{ get_role_bindings.stdout | from_json }}
     roleref_query: >-
