@@ -12,7 +12,7 @@
     cluster_role_binding: "{{ item }}"
     current_cluster_role_bindings: >-
       {{ get_cluster_role_bindings.stdout | from_json }}
-    roleref_query: "roleRef.name=='{{ item.role }}'"
+    roleref_query: "roleRef.name=='{{ cluster_role_binding.role }}'"
     current_cluster_role_users_query: >-
       items[?{{ roleref_query }}].subjects[]|[?kind=='User' || kind=='SystemUser'].name
     current_cluster_role_users: >
