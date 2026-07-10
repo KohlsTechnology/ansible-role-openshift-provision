@@ -105,22 +105,22 @@
     {% if ansible_check_mode %}echo{% endif %}
     {{ oc_cmd }} patch namespace {{ project.name | quote }}
     --type=json -o json -p {{ remove | to_json | quote }}
-  loop: "{{ current_annotations }}"
+  loop: "{{ current_annotations | dict2items }}"
   vars:
     current_annotations: >-
       {{
       ( get_project.stdout if get_project.rc == 0 else '{}' )
       | from_json
       | json_query('metadata.annotations')
+      | default({})
       }}
     remove:
       - op: remove
-        path: /metadata/annotations
-        value: "{{ project.annotations | default({}) }}"
+        path: /metadata/annotations/{{ item.key }}
   when: >
     ( project.remove_unlisted | default(false) | bool or
       project.remove_unlisted_annotations | default(false) | bool ) and
-    item not in project.annotations | default({})
+    item.key not in project.annotations | default({})
   check_mode: false
   register: command
   changed_when: >-
@@ -158,22 +158,22 @@
     {% if ansible_check_mode %}echo{% endif %}
     {{ oc_cmd }} patch namespace {{ project.name | quote }}
     --type=json -o json -p {{ remove | to_json | quote }}
-  loop: "{{ current_labels }}"
+  loop: "{{ current_labels | dict2items }}"
   vars:
     current_labels: >-
       {{
       ( get_project.stdout if get_project.rc == 0 else '{}' )
       | from_json
       | json_query('metadata.labels')
+      | default({})
       }}
     remove:
       - op: remove
-        path: /metadata/labels
-        value: "{{ project.labels | default({}) }}"
+        path: /metadata/labels/{{ item.key }}
   when: >
     ( project.remove_unlisted | default(false) | bool or
       project.remove_unlisted_labels | default(false) | bool ) and
-    item not in project.labels | default({})
+    item.key not in project.labels | default({})
   check_mode: false
   register: command
   changed_when: >-
@@ -237,15 +237,17 @@
 - name: Handle project resources for {{ project.name }}
   include_tasks: project-resources.yml
   loop: "{{ project.resources | default([]) }}"
+  loop_control:
+    loop_var: project_resource
   vars:
     resource_path: "{{ project.resource_path | default(cluster_resource_path) }}"
     resource_list: >-
-      {%- if item is mapping -%}
-      {{ [item] }}
+      {%- if project_resource is mapping -%}
+      {{ [project_resource] }}
       {%- else -%}
       {{ lookup(
-           'template' if item.endswith('.j2') else 'file',
-           lookup('first_found', {'files':item, 'paths': resource_path})
+           'template' if project_resource.endswith('.j2') else 'file',
+           lookup('first_found', {'files':project_resource, 'paths': resource_path})
          ) | yaml_to_resource_list
       }}
       {%- endif -%}
@@ -260,11 +262,11 @@
     | default([])
     | union( project.templates | default([]) )
     }}
-  vars:
-    template: "{{ item }}"
+  loop_control:
+    loop_var: template
 
 - name: Handle project helm_charts
   include_tasks: helm-chart.yml
   loop: "{{ project.helm_charts | default([]) }}"
-  vars:
-    helm_chart: "{{ item }}"
+  loop_control:
+    loop_var: helm_chart
