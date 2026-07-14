@@ -69,22 +69,18 @@
   when: get_cluster_vars.rc == 0
 
 - name: Include provision pre-tasks
-  include_tasks: "{{ pre_tasks_include }}"
-  with_items: >-
+  include_tasks: "{{ item }}"
+  loop: >-
     {{ openshift_cluster_provision_pre_tasks | default([])
      | union(openshift_cluster.provision_pre_tasks | default([]))
     }}
-  loop_control:
-    loop_var: pre_tasks_include
 
 - name: Provision resources for cluster
   include_tasks: openshift-cluster-provision.yml
 
 - name: Include provision post-tasks
-  include_tasks: "{{ post_tasks_include }}"
-  with_items: >-
+  include_tasks: "{{ item }}"
+  loop: >-
     {{ openshift_cluster_provision_post_tasks | default([])
      | union(openshift_cluster.provision_post_tasks | default([]))
     }}
-  loop_control:
-    loop_var: post_tasks_include

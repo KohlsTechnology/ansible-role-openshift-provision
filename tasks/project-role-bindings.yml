@@ -9,7 +9,7 @@
 
 - name: Handle project role_bindings
   include_tasks: project-role-binding.yml
-  with_items: "{{ project.role_bindings | default([]) }}"
+  loop: "{{ project.role_bindings | default([]) }}"
   loop_control:
     loop_var: role_binding
   vars:

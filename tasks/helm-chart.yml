@@ -88,7 +88,7 @@
     namespace: "{{ project.name if project is defined else '' }}"
     resource: "{{ item }}"
     generate_resources: "{{ generate_resources }}"
-  with_items: "{{ process_helm_template.stdout | yaml_to_resource_list }}"
+  loop: "{{ process_helm_template.stdout | yaml_to_resource_list }}"
   vars:
     provision_action: >-
       {{ item

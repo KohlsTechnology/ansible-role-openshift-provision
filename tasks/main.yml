@@ -5,7 +5,7 @@
     provision_retry_wait_seconds: "{{ 5 if provision_retry_wait_seconds is undefined else provision_retry_wait_seconds }}"
 - name: Handle openshift_clusters
   include_tasks: openshift-cluster.yml
-  with_items: >-
+  loop: >-
     {{ openshift_clusters
      | default([openshift_provision] if openshift_provision is defined else [])
     }}

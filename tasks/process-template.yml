@@ -81,7 +81,7 @@
     namespace: "{{ project.name if project is defined else '' }}"
     resource: "{{ item }}"
     generate_resources: "{{ generate_resources }}"
-  with_items: >-
+  loop: >-
     {{ process_template.stdout | from_json | json_query('items') }}
   vars:
     provision_action: >-

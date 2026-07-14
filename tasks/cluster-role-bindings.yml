@@ -7,7 +7,7 @@
 
 - name: Handle cluster_role_bindings
   include_tasks: cluster-role-binding.yml
-  with_items: "{{ openshift_cluster.cluster_role_bindings | default([]) }}"
+  loop: "{{ openshift_cluster.cluster_role_bindings | default([]) }}"
   loop_control:
     loop_var: cluster_role_binding
   vars:
