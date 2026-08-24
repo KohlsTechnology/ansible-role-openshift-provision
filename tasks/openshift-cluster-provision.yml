@@ -14,7 +14,7 @@
 
   - name: Handle cluster_resources
     include_tasks: cluster-resources.yml
-    loop: "{{ openshift_cluster.cluster_resources | default([]) }}"
+    loop: "{{ openshift_cluster.cluster_resources | default([]) | flatten }}"
     loop_control:
       loop_var: cluster_resource
     vars:
