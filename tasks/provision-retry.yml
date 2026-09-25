@@ -20,7 +20,10 @@
     loop: "{{ provision_failures }}"
     vars:
       provision_args: "{{ item.invocation.module_args | default({}, true) }}"
-      provision_resource: "{{ item.resource | default({}, true) }}"
+      provision_resource: >-
+        {{ item.resource
+           if item.resource | default({}) else
+           (item.invocation.module_args.resource | default({}, true)) }}
     when: item.failed | default(false, true)
     register: provision_retry_status
     ignore_errors: True
@@ -31,8 +34,25 @@
       provision_failures: []
   - name: Record new failures
     set_fact:
-      provision_failures: "{{ provision_failures + [item] }}"
+      provision_failures: "{{ provision_failures + [record] }}"
     loop: "{{ provision_retry_status.results }}"
+    vars:
+      prev_args: "{{ item.item.invocation.module_args | default({}, true) }}"
+      record:
+        failed: true
+        resource: >-
+          {{ item.invocation.module_args.resource
+             if (item.invocation.module_args.resource | default({})) else
+             (item.resource
+                if item.resource | default({}) else
+                (item.item.resource
+                   if item.item.resource | default({}) else
+                   prev_args)) }}
+        invocation: >-
+          {{ {'module_args': item.invocation.module_args
+              if (item.invocation.module_args | default({})) else
+              prev_args} }}
+        msg: "{{ item.msg | default('', true) }}"
     when: item.failed | default(false, true)
 
   - name: Check for failures

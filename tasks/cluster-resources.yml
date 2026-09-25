@@ -25,9 +25,24 @@
   changed_when: >-
     provision | record_change_provision(change_record)
   ignore_errors: True
-- set_fact:
-    provision_failures: "{{ provision_failures + provision.results }}"
-  when: "'failed' in provision and 'results' in provision"
+- name: Record new failures
+  set_fact:
+    provision_failures: "{{ provision_failures + [record] }}"
+  loop: "{{ provision.results }}"
+  vars:
+    record:
+      failed: true
+      resource: >-
+        {{ item.invocation.module_args.resource
+           if (item.invocation.module_args.resource | default({})) else
+           (item.resource
+              if item.resource | default({}) else
+              (item.item
+                 if item.item | default({}) else
+                 {})) }}
+      invocation: "{{ {'module_args': item.invocation.module_args | default({}, true)} }}"
+      msg: "{{ item.msg | default('', true) }}"
+  when: item.failed | default(false)
 - set_fact:
     provision_failures_skipped: "{{ provision_failures_skipped + [provision] }}"
   when: "'results' not in provision"
