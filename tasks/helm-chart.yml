@@ -89,6 +89,8 @@
     resource: "{{ item }}"
     generate_resources: "{{ generate_resources }}"
   loop: "{{ process_helm_template.stdout | yaml_to_resource_list }}"
+  loop_control:
+    label: "{{ item | resource_label }}"
   vars:
     provision_action: >-
       {{ item

@@ -14,6 +14,8 @@
     resource: "{{ item }}"
     generate_resources: "{{ generate_resources }}"
   loop: "{{ resource_list }}"
+  loop_control:
+    label: "{{ item | resource_label }}"
   vars:
     provision_action: >-
       {{
@@ -26,9 +28,15 @@
   changed_when: >-
     provision | record_change_provision(change_record)
   ignore_errors: True
-- set_fact:
-    provision_failures: "{{ provision_failures + provision.results }}"
-  when: "'failed' in provision and 'results' in provision"
+- name: Record new failures for {{ project.name }}
+  set_fact:
+    provision_failures: >-
+      {{ provision_failures
+         + (provision.results | default([], true)
+            | selectattr('failed', 'defined')
+            | selectattr('failed', 'equalto', true)
+            | map('record_failure')
+            | list) }}
 - set_fact:
     provision_failures_skipped: "{{ provision_failures_skipped + [provision] }}"
   when: "'results' not in provision"

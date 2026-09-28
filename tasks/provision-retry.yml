@@ -18,6 +18,8 @@
       fail_on_change: "{{ provision_args.fail_on_change | default(omit) }}"
       namespace: "{{ provision_args.namespace | default(omit) }}"
     loop: "{{ provision_failures }}"
+    loop_control:
+      label: "{{ item | resource_label }}"
     vars:
       provision_args: "{{ item.invocation.module_args | default({}, true) }}"
       provision_resource: >-
@@ -34,30 +36,21 @@
       provision_failures: []
   - name: Record new failures
     set_fact:
-      provision_failures: "{{ provision_failures + [record] }}"
-    loop: "{{ provision_retry_status.results }}"
-    vars:
-      prev_args: "{{ item.item.invocation.module_args | default({}, true) }}"
-      record:
-        failed: true
-        resource: >-
-          {{ item.invocation.module_args.resource
-             if (item.invocation.module_args.resource | default({})) else
-             (item.resource
-                if item.resource | default({}) else
-                (item.item.resource
-                   if item.item.resource | default({}) else
-                   prev_args)) }}
-        invocation: >-
-          {{ {'module_args': item.invocation.module_args
-              if (item.invocation.module_args | default({})) else
-              prev_args} }}
-        msg: "{{ item.msg | default('', true) }}"
-    when: item.failed | default(false, true)
+      provision_failures: >-
+        {{ provision_retry_status.results | default([], true)
+           | selectattr('failed', 'defined')
+           | selectattr('failed', 'equalto', true)
+           | map('record_failure')
+           | list }}
 
   - name: Check for failures
     fail:
-      msg: "{{ provision_failures }}"
+      msg: |-
+        Failed to provision {{ provision_failures | length }} resource(s)
+        after {{ retry_count }} attempt(s):
+        {% for failure in provision_failures %}
+        - {{ failure | resource_label }}: {{ failure.msg | default('failed') }}
+        {% endfor %}
     when: provision_failures | length > 0
 
   rescue:

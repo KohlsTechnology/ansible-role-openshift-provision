@@ -13,6 +13,8 @@
     resource: "{{ item }}"
     generate_resources: "{{ generate_resources }}"
   loop: "{{ resource_list }}"
+  loop_control:
+    label: "{{ item | resource_label }}"
   vars:
     provision_action: >-
       {{
@@ -27,22 +29,13 @@
   ignore_errors: True
 - name: Record new failures
   set_fact:
-    provision_failures: "{{ provision_failures + [record] }}"
-  loop: "{{ provision.results }}"
-  vars:
-    record:
-      failed: true
-      resource: >-
-        {{ item.invocation.module_args.resource
-           if (item.invocation.module_args.resource | default({})) else
-           (item.resource
-              if item.resource | default({}) else
-              (item.item
-                 if item.item | default({}) else
-                 {})) }}
-      invocation: "{{ {'module_args': item.invocation.module_args | default({}, true)} }}"
-      msg: "{{ item.msg | default('', true) }}"
-  when: item.failed | default(false)
+    provision_failures: >-
+      {{ provision_failures
+         + (provision.results | default([], true)
+            | selectattr('failed', 'defined')
+            | selectattr('failed', 'equalto', true)
+            | map('record_failure')
+            | list) }}
 - set_fact:
     provision_failures_skipped: "{{ provision_failures_skipped + [provision] }}"
   when: "'results' not in provision"
