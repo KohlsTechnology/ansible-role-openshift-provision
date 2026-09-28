@@ -8,7 +8,7 @@ import tempfile
 import traceback
 import types
 
-from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.basic import AnsibleModule, heuristic_log_sanitize
 
 DOCUMENTATION = '''
 ---
@@ -1099,19 +1099,19 @@ class OpenShiftProvision:
                 module.no_log_values.add(arg[8:])
 
     def run_oc(self, args, **kwargs):
-        if self.module._verbosity < 3:
-            # Not running in debug mode, call module run_command which filters passwords
-            return self.module.run_command(self.oc_cmd + args, **kwargs)
-
-        check_rc = True
-        if 'check_rc' in kwargs:
-            check_rc = kwargs['check_rc']
-        kwargs['check_rc'] = False
-
-        (rc, stdout, stderr) = self.module.run_command(self.oc_cmd + args, **kwargs)
+        check_rc = kwargs.pop('check_rc', False)
+        (rc, stdout, stderr) = self.module.run_command(
+            self.oc_cmd + args, check_rc=False, **kwargs
+        )
 
         if rc != 0 and check_rc:
-            self.module.fail_json(cmd=args, rc=rc, stdout=stdout, stderr=stderr, msg=stderr)
+            self.module.fail_json(
+                rc=rc,
+                stdout=stdout,
+                stderr=stderr,
+                msg=heuristic_log_sanitize(stderr.rstrip(), self.module.no_log_values)
+                if stderr else 'oc command failed',
+            )
 
         return (rc, stdout, stderr)
 
@@ -1561,11 +1561,12 @@ def run_module():
     try:
         provisioner.provision()
     except Exception as e:
+        # Do not return the full resource here! 
+        # This can (and has) exhausted job log limits
         module.fail_json(
             msg=str(e),
             action=provisioner.action,
             traceback=traceback.format_exc().split('\n'),
-            resource=provisioner.resource
         )
 
     module.exit_json(
