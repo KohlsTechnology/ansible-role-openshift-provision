@@ -195,6 +195,9 @@ Top level definition of how to manage a cluster:
   failed tasks in the play recap when retries are needed. However, ansible will
   still exit successfully if all resources were able to provision within the
   retry limit.
+  Only resources that actually failed are retried and failures are reported
+  with a short `Kind namespace/name` label rather than their full definition so
+  that large resources do not flood the playbook log.
 
 * `provision_retry_wait_seconds` - Number of seconds to wait before reapplying
   resources.  Defaults to 5
