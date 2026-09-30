@@ -10,6 +10,24 @@ import types
 
 from ansible.module_utils.basic import AnsibleModule, heuristic_log_sanitize
 
+AUTH_ERROR_MARKERS = (
+    'the server has asked for the client to provide credentials',
+    'You must be logged in to the server',
+    'Unauthorized',
+)
+
+
+def is_auth_error(*values):
+    """Return True when oc output indicates the credentials were rejected."""
+    for value in values:
+        if not value:
+            continue
+        for marker in AUTH_ERROR_MARKERS:
+            if marker in value:
+                return True
+    return False
+
+
 DOCUMENTATION = '''
 ---
 module: openshift_provision
@@ -1105,13 +1123,16 @@ class OpenShiftProvision:
         )
 
         if rc != 0 and check_rc:
-            self.module.fail_json(
-                rc=rc,
-                stdout=stdout,
-                stderr=stderr,
-                msg=heuristic_log_sanitize(stderr.rstrip(), self.module.no_log_values)
+            result = {
+                'rc': rc,
+                'stdout': stdout,
+                'stderr': stderr,
+                'msg': heuristic_log_sanitize(stderr.rstrip(), self.module.no_log_values)
                 if stderr else 'oc command failed',
-            )
+            }
+            if is_auth_error(stderr, stdout):
+                result['auth_failure'] = True
+            self.module.fail_json(**result)
 
         return (rc, stdout, stderr)
 
@@ -1563,11 +1584,14 @@ def run_module():
     except Exception as e:
         # Do not return the full resource here! 
         # This can (and has) exhausted job log limits
-        module.fail_json(
-            msg=str(e),
-            action=provisioner.action,
-            traceback=traceback.format_exc().split('\n'),
-        )
+        result = {
+            'msg': str(e),
+            'action': provisioner.action,
+            'traceback': traceback.format_exc().split('\n'),
+        }
+        if is_auth_error(str(e)):
+            result['auth_failure'] = True
+        module.fail_json(**result)
 
     module.exit_json(
         action=provisioner.action,

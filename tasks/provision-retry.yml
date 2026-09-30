@@ -8,11 +8,19 @@
       seconds: "{{ provision_retry_wait_seconds }}"
     when: (provision_retry_wait_seconds | int) > 0
 
+  # Refresh the session token before retrying so a token that expired during a
+  # long run is replaced. Skipped when the cluster is accessed with a static
+  # token (no login credentials)
+  - name: Refresh cluster login before retry
+    include_tasks: openshift-login.yml
+    when: openshift_login_enabled | default(false) | bool
+
   - name: "retry provisioning resources (attempt {{ retry_count }})"
     openshift_provision:
       action: "{{ provision_args.action | default(omit) }}"
       patch_type: "{{ provision_args.patch_type | default(omit) }}"
-      connection: "{{ provision_args.connection | default(omit) }}"
+      connection:
+        oc_cmd: "{{ oc_cmd }}"
       resource: "{{ provision_resource }}"
       generate_resources: "{{ provision_args.generate_resources | default(omit) }}"
       fail_on_change: "{{ provision_args.fail_on_change | default(omit) }}"
@@ -54,6 +62,23 @@
     when: provision_failures | length > 0
 
   rescue:
+  # Authentication cannot be recovered by retrying the same resource, so stop
+  # instead of looping until the retry limit and flooding the log with 401s
+  - name: Stop retrying after authentication failure
+    fail:
+      msg: >-
+        Authentication failed while provisioning. Verify the cluster
+        credentials and re-run. The following resources could not be
+        provisioned:
+        {% for failure in provision_failures | selectattr('auth_failure', 'defined') | selectattr('auth_failure', 'equalto', true) | list %}
+        - {{ failure | resource_label }}: {{ failure.msg | default('') }}
+        {% endfor %}
+    when: >-
+      provision_failures
+      | selectattr('auth_failure', 'defined')
+      | selectattr('auth_failure', 'equalto', true)
+      | list | length > 0
+
   - name: Check retry limit
     fail:
       msg: "Maximum retries reached ({{ provision_retry_limit }})"

@@ -1,35 +1,19 @@
 ---
-- when: >-
-    openshift_login_username is defined or
-    openshift_cluster.login is defined
-  block:
-  - name: Login to cluster
-    command: >-
-      {{ oc_cmd_opt }} login
-      {% if openshift_cluster.login is defined %}
-      --username={{ openshift_cluster.login.username | quote }}
-      --password={{ openshift_cluster.login.password | quote }}
-      {% else %}
-      --username={{ openshift_login_username | quote }}
-      --password={{ openshift_login_password | quote }}
-      {% endif %}
-    check_mode: false
-    changed_when: false
+- name: Determine login mode
+  set_fact:
+    openshift_login_enabled: >-
+      {{ openshift_login_username is defined or
+         openshift_cluster.login is defined }}
 
-  - name: Get login session token
-    command: >-
-      oc whoami -t
-    register: oc_get_token
-    check_mode: false
-    changed_when: false
+- name: Login to cluster
+  include_tasks: openshift-login.yml
+  when: openshift_login_enabled | bool
 
 - name: Set fact for oc_cmd
   set_fact:
-    oc_cmd: >-
-      {{ oc_cmd_opt }}
-      {% if not oc_get_token.skipped | default(False) %}
-      --token={{ oc_get_token.stdout }}
-      {% endif %}
+    oc_cmd: "{{ oc_cmd_opt }}"
+  when: not (openshift_login_enabled | bool)
+  no_log: true
 
 - name: Get OpenShift version
   command: "{{ oc_cmd }} version"

@@ -39,6 +39,7 @@ def record_failure(result):
         'resource': _resource(result, module_args),
         'invocation': {'module_args': module_args},
         'msg': result.get('msg', ''),
+        'auth_failure': bool(result.get('auth_failure', False)),
     }
 
 

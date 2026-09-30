@@ -198,6 +198,8 @@ Top level definition of how to manage a cluster:
   Only resources that actually failed are retried and failures are reported
   with a short `Kind namespace/name` label rather than their full definition so
   that large resources do not flood the playbook log.
+  When login credentials are configured, the cluster login is refreshed before
+  each retry so a session token that expired during a long run is replaced.
 
 * `provision_retry_wait_seconds` - Number of seconds to wait before reapplying
   resources.  Defaults to 5
