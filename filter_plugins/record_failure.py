@@ -19,13 +19,20 @@ def _module_args(result):
     return {}
 
 
+def _is_resource(value):
+    return isinstance(value, dict) and (
+        'kind' in value or 'apiVersion' in value
+    )
+
+
 def _resource(result, module_args):
-    if isinstance(module_args.get('resource'), dict):
-        return module_args['resource']
-    if isinstance(result.get('resource'), dict):
-        return result['resource']
-    if isinstance(result.get('item'), dict):
-        return result['item']
+    for candidate in (
+        module_args.get('resource'),
+        result.get('resource'),
+        result.get('item'),
+    ):
+        if _is_resource(candidate):
+            return candidate
     return {}
 
 

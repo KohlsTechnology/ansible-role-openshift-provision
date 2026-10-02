@@ -25,16 +25,19 @@
       generate_resources: "{{ provision_args.generate_resources | default(omit) }}"
       fail_on_change: "{{ provision_args.fail_on_change | default(omit) }}"
       namespace: "{{ provision_args.namespace | default(omit) }}"
-    loop: "{{ provision_failures }}"
+    # Loop over indexes so the loop item Ansible prints on failure is a number
+    # instead of a full resource definition
+    loop: "{{ range(0, provision_failures | length) | list }}"
     loop_control:
-      label: "{{ item | resource_label }}"
+      label: "{{ provision_failures[item] | resource_label }}"
     vars:
-      provision_args: "{{ item.invocation.module_args | default({}, true) }}"
+      provision_failure: "{{ provision_failures[item] }}"
+      provision_args: "{{ provision_failure.invocation.module_args | default({}, true) }}"
       provision_resource: >-
-        {{ item.resource
-           if item.resource | default({}) else
-           (item.invocation.module_args.resource | default({}, true)) }}
-    when: item.failed | default(false, true)
+        {{ provision_failure.resource
+           if provision_failure.resource | default({}) else
+           (provision_failure.invocation.module_args.resource | default({}, true)) }}
+    when: provision_failure.failed | default(false, true)
     register: provision_retry_status
     ignore_errors: True
 

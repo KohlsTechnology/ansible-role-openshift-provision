@@ -1577,18 +1577,19 @@ def run_module():
         supports_check_mode=True
     )
 
-    provisioner = OpenShiftProvision(module)
-
+    provisioner = None
     try:
+        provisioner = OpenShiftProvision(module)
         provisioner.provision()
     except Exception as e:
-        # Do not return the full resource here! 
+        # Do not return the full resource here!
         # This can (and has) exhausted job log limits
         result = {
             'msg': str(e),
-            'action': provisioner.action,
             'traceback': traceback.format_exc().split('\n'),
         }
+        if provisioner is not None:
+            result['action'] = provisioner.action
         if is_auth_error(str(e)):
             result['auth_failure'] = True
         module.fail_json(**result)
