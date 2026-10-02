@@ -1,0 +1,31 @@
+---
+# Log in to the OpenShift cluster and (re)build the oc_cmd fact
+
+- name: Login to cluster
+  command: >-
+    {{ oc_cmd_opt }} login
+    {% if openshift_cluster.login is defined %}
+    --username={{ openshift_cluster.login.username | quote }}
+    --password={{ openshift_cluster.login.password | quote }}
+    {% else %}
+    --username={{ openshift_login_username | quote }}
+    --password={{ openshift_login_password | quote }}
+    {% endif %}
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Get login session token
+  command: >-
+    {{ oc_cmd_base }} whoami -t
+  register: oc_get_token
+  check_mode: false
+  changed_when: false
+  no_log: true
+
+- name: Set oc_cmd fact
+  set_fact:
+    oc_cmd: >-
+      {{ oc_cmd_opt }}
+      --token={{ oc_get_token.stdout }}
+  no_log: true
