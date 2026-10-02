@@ -86,23 +86,25 @@
     connection:
       oc_cmd: "{{ oc_cmd }}"
     namespace: "{{ project.name if project is defined else '' }}"
-    resource: "{{ item }}"
+    resource: "{{ provision_resource }}"
     generate_resources: "{{ generate_resources }}"
-  loop: "{{ process_helm_template.stdout | yaml_to_resource_list }}"
+  loop: "{{ range(0, helm_resource_list | length) | list }}"
   loop_control:
-    label: "{{ item | resource_label }}"
+    label: "{{ helm_resource_list[item] | resource_label }}"
   vars:
+    helm_resource_list: "{{ process_helm_template.stdout | yaml_to_resource_list }}"
+    provision_resource: "{{ helm_resource_list[item] }}"
     provision_action: >-
-      {{ item
+      {{ provision_resource
       | json_query('metadata.annotations."openshift-provision/action"')
-      | default(item.action, true)
+      | default(provision_resource.action, true)
       | default(helm_chart.action, true)
       | default('apply', true)
       }}
     provision_patch_type: >-
-      {{ item
+      {{ provision_resource
       | json_query('metadata.annotations."openshift-provision/patch-type"')
-      | default(item.patch_type, true)
+      | default(provision_resource.patch_type, true)
       | default(helm_chart.patch_type, true)
       | default('strategic', true)
       }}

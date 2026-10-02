@@ -4,22 +4,26 @@
     action: "{{ provision_action }}"
     patch_type: >-
       {{
-      item | json_query('metadata.annotations."openshift-provision/patch-type"')
-      | default(item.patch_type, true)
+      provision_resource | json_query('metadata.annotations."openshift-provision/patch-type"')
+      | default(provision_resource.patch_type, true)
       | default('strategic', true)
       }}
     connection:
       oc_cmd: "{{ oc_cmd }}"
-    resource: "{{ item }}"
+    resource: "{{ provision_resource }}"
     generate_resources: "{{ generate_resources }}"
-  loop: "{{ resource_list }}"
+  # Loop over indexes instead of the resources themselves. Ansible prints the
+  # loop item in failed results, and a resource such as a Grafana dashboard
+  # ConfigMap is far too large for the job log
+  loop: "{{ range(0, resource_list | length) | list }}"
   loop_control:
-    label: "{{ item | resource_label }}"
+    label: "{{ resource_list[item] | resource_label }}"
   vars:
+    provision_resource: "{{ resource_list[item] }}"
     provision_action: >-
       {{
-      item | json_query('metadata.annotations."openshift-provision/action"')
-      | default(item.action, true)
+      provision_resource | json_query('metadata.annotations."openshift-provision/action"')
+      | default(provision_resource.action, true)
       | default('apply', true)
       }}
   when: provision_action != 'ignore'
