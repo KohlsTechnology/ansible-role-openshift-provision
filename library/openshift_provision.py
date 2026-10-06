@@ -706,6 +706,9 @@ def normalize_LimitRangeSpec_V1(spec):
             if name not in ('type', 'maxLimitRequestRatio'):
                 normalize_resource_units(value)
 
+def normalize_MachineAutoscaler_V1beta1(autoscaler):
+    autoscaler.get('metadata', {}).pop('finalizers', None)
+
 def normalize_NetworkPolicy_V1(policy):
     set_dict_defaults(policy, {
         'metadata': {},
@@ -1260,6 +1263,9 @@ class OpenShiftProvision:
 
     def normalize_resource_LimitRange(self, resource):
         normalize_LimitRange_V1(resource)
+
+    def normalize_resource_MachineAutoscaler(self, resource):
+        normalize_MachineAutoscaler_V1beta1(resource)
 
     def normalize_resource_NetworkPolicy(self, resource):
         normalize_NetworkPolicy_V1(resource)
