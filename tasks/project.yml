@@ -112,7 +112,7 @@
       ( get_project.stdout if get_project.rc == 0 else '{}' )
       | from_json
       | json_query('metadata.annotations')
-      | default({})
+      | default({},true)
       }}
     remove:
       - op: remove
@@ -165,7 +165,7 @@
       ( get_project.stdout if get_project.rc == 0 else '{}' )
       | from_json
       | json_query('metadata.labels')
-      | default({})
+      | default({},true)
       }}
     remove:
       - op: remove
