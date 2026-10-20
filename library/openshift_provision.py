@@ -5,6 +5,7 @@ import json
 import os
 import re
 import tempfile
+import time
 import traceback
 import types
 
@@ -16,16 +17,73 @@ AUTH_ERROR_MARKERS = (
     'Unauthorized',
 )
 
+TRANSIENT_ERROR_MARKERS = (
+    '429',
+    '503',
+    '504',
+    'etcdserver',
+    'connection refused',
+    'i/o timeout',
+    'TLS handshake timeout',
+    'the server was unable to return a response',
+    'connection reset by peer',
+)
+
+FORBIDDEN_ERROR_MARKERS = (
+    'forbidden',
+    'cannot get resource',
+    'cannot create resource',
+)
+
+NOTFOUND_ERROR_MARKERS = (
+    '(NotFound)',
+    'not found',
+)
+
+VALIDATION_ERROR_MARKERS = (
+    'is invalid',
+    'Invalid value',
+    'admission webhook',
+    'denied the request',
+    'no matches for kind',
+    'unable to recognize',
+)
+
 
 def is_auth_error(*values):
     """Return True when oc output indicates the credentials were rejected."""
+    return classify_error(*values) == 'auth'
+
+
+def classify_error(*values):
+    """Classify oc output into an error bucket.
+
+    Buckets: auth, transient, forbidden, notfound, validation, unknown
+    """
     for value in values:
         if not value:
             continue
+        text = str(value)
         for marker in AUTH_ERROR_MARKERS:
-            if marker in value:
-                return True
-    return False
+            if marker in text:
+                return 'auth'
+    for value in values:
+        if not value:
+            continue
+        text = str(value)
+        for marker in TRANSIENT_ERROR_MARKERS:
+            if marker in text:
+                return 'transient'
+        for marker in FORBIDDEN_ERROR_MARKERS:
+            if marker in text:
+                return 'forbidden'
+        for marker in NOTFOUND_ERROR_MARKERS:
+            if marker in text:
+                return 'notfound'
+        for marker in VALIDATION_ERROR_MARKERS:
+            if marker in text:
+                return 'validation'
+    return 'unknown'
 
 
 DOCUMENTATION = '''
@@ -1085,6 +1143,8 @@ class OpenShiftProvision:
         self.patch_type = module.params['patch_type']
         self.resource = module.params['resource']
         self.generate_resources = module.params['generate_resources']
+        self.oc_calls = 0
+        self.oc_seconds = 0.0
 
         if not 'kind' in self.resource:
             raise Exception('resource must define kind')
@@ -1118,9 +1178,12 @@ class OpenShiftProvision:
 
     def run_oc(self, args, **kwargs):
         check_rc = kwargs.pop('check_rc', False)
+        start = time.monotonic()
         (rc, stdout, stderr) = self.module.run_command(
             self.oc_cmd + args, check_rc=False, **kwargs
         )
+        self.oc_calls += 1
+        self.oc_seconds += time.monotonic() - start
 
         if rc != 0 and check_rc:
             result = {
@@ -1129,8 +1192,9 @@ class OpenShiftProvision:
                 'stderr': stderr,
                 'msg': heuristic_log_sanitize(stderr.rstrip(), self.module.no_log_values)
                 if stderr else 'oc command failed',
+                'error_class': classify_error(stderr, stdout),
             }
-            if is_auth_error(stderr, stdout):
+            if result['error_class'] == 'auth':
                 result['auth_failure'] = True
             self.module.fail_json(**result)
 
@@ -1534,6 +1598,30 @@ class OpenShiftProvision:
                 command += ['--save-config']
             self.run_oc(command, data=json.dumps(self.resource), check_rc=True)
 
+def record_timing(timing_file, provisioner, action, elapsed, error_class=None):
+    if not timing_file:
+        return
+    resource = provisioner.resource if provisioner is not None else {}
+    metadata = resource.get('metadata', {}) if isinstance(resource, dict) else {}
+    record = {
+        'timestamp': time.time(),
+        'kind': resource.get('kind') if isinstance(resource, dict) else None,
+        'namespace': metadata.get('namespace', ''),
+        'name': metadata.get('name', ''),
+        'action': action,
+        'changed': bool(provisioner.changed) if provisioner is not None else False,
+        'oc_calls': provisioner.oc_calls if provisioner is not None else 0,
+        'oc_seconds': round(provisioner.oc_seconds, 3) if provisioner is not None else 0.0,
+        'elapsed': round(elapsed, 3),
+        'error_class': error_class or 'none',
+    }
+    try:
+        with open(timing_file, 'a') as f:
+            f.write(json.dumps(record) + '\n')
+    except Exception:
+        pass
+
+
 def run_module():
     module_args = {
         'action': {
@@ -1577,28 +1665,40 @@ def run_module():
         supports_check_mode=True
     )
 
+    timing_file = os.environ.get('OPENSHIFT_PROVISION_TIMING_FILE', '')
     provisioner = None
+    start = time.monotonic()
     try:
         provisioner = OpenShiftProvision(module)
         provisioner.provision()
     except Exception as e:
+        elapsed = time.monotonic() - start
         # Do not return the full resource here!
         # This can (and has) exhausted job log limits
+        error_class = classify_error(str(e))
         result = {
             'msg': str(e),
             'traceback': traceback.format_exc().split('\n'),
+            'error_class': error_class,
         }
+        if error_class == 'auth':
+            result['auth_failure'] = True
         if provisioner is not None:
             result['action'] = provisioner.action
-        if is_auth_error(str(e)):
-            result['auth_failure'] = True
+        record_timing(timing_file, provisioner,
+                      provisioner.action if provisioner is not None else None,
+                      elapsed, error_class)
         module.fail_json(**result)
 
+    elapsed = time.monotonic() - start
+    record_timing(timing_file, provisioner, provisioner.action, elapsed)
     module.exit_json(
         action=provisioner.action,
         changed=provisioner.changed,
         patch=provisioner.patch,
-        resource=provisioner.resource
+        resource=provisioner.resource,
+        oc_calls=provisioner.oc_calls,
+        oc_seconds=round(provisioner.oc_seconds, 3)
     )
 
 def main():
