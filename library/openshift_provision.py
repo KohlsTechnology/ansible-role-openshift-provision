@@ -6,6 +6,8 @@ import os
 import re
 import tempfile
 import time
+
+PROCESS_START_TIME = time.monotonic()
 import traceback
 import types
 
@@ -1613,6 +1615,7 @@ def record_timing(timing_file, provisioner, action, elapsed, error_class=None):
         'oc_calls': provisioner.oc_calls if provisioner is not None else 0,
         'oc_seconds': round(provisioner.oc_seconds, 3) if provisioner is not None else 0.0,
         'elapsed': round(elapsed, 3),
+        'startup_seconds': round(time.monotonic() - PROCESS_START_TIME, 3),
         'error_class': error_class or 'none',
     }
     try:
