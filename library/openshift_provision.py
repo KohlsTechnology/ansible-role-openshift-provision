@@ -29,6 +29,8 @@ TRANSIENT_ERROR_MARKERS = (
     'TLS handshake timeout',
     'the server was unable to return a response',
     'connection reset by peer',
+    'no matches for kind',
+    'ensure CRDs are installed first',
 )
 
 FORBIDDEN_ERROR_MARKERS = (
@@ -47,7 +49,6 @@ VALIDATION_ERROR_MARKERS = (
     'Invalid value',
     'admission webhook',
     'denied the request',
-    'no matches for kind',
     'unable to recognize',
 )
 
