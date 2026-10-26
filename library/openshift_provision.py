@@ -1135,15 +1135,30 @@ def normalize_VolumeList_V1(volumes):
 def normalize_VolumeMountList_V1(volume_mount_list):
     mark_list_with_keys(volume_mount_list, 'name')
 
+class OcError(Exception):
+    """Raised when an oc invocation fails and carries the full failure result
+
+    Replaces module.fail_json inside run_oc so that batch mode can capture
+    per resource failures without aborting the whole batch. Single mode
+    catches this in run_module and converts it to fail_json
+    """
+
+    def __init__(self, result):
+        super().__init__(result.get('msg', 'oc command failed'))
+        self.result = result
+
+
 class OpenShiftProvision:
-    def __init__(self, module):
+    def __init__(self, module, resource=None, action=None, patch_type=None):
+        if resource is None:
+            resource = module.params['resource']
         self.module = module
         self.changed = False
-        self.action = module.params['action']
+        self.action = action if action is not None else module.params['action']
         self.fail_on_change = module.params['fail_on_change']
         self.patch = None
-        self.patch_type = module.params['patch_type']
-        self.resource = module.params['resource']
+        self.patch_type = patch_type if patch_type is not None else module.params['patch_type']
+        self.resource = resource
         self.generate_resources = module.params['generate_resources']
         self.oc_calls = 0
         self.oc_seconds = 0.0
@@ -1198,7 +1213,7 @@ class OpenShiftProvision:
             }
             if result['error_class'] == 'auth':
                 result['auth_failure'] = True
-            self.module.fail_json(**result)
+            raise OcError(result)
 
         return (rc, stdout, stderr)
 
@@ -1605,6 +1620,15 @@ def record_timing(timing_file, provisioner, action, elapsed, error_class=None):
         return
     resource = provisioner.resource if provisioner is not None else {}
     metadata = resource.get('metadata', {}) if isinstance(resource, dict) else {}
+    patch_ops = []
+    patch = provisioner.patch if provisioner is not None else None
+    if patch:
+        patch_ops = [
+            "{} {}".format(op.get('op', '?'), op.get('path', '?'))
+            for op in patch[:15]
+        ]
+        if len(patch) > 15:
+            patch_ops.append("... %d more" % (len(patch) - 15))
     record = {
         'timestamp': time.time(),
         'kind': resource.get('kind') if isinstance(resource, dict) else None,
@@ -1617,12 +1641,48 @@ def record_timing(timing_file, provisioner, action, elapsed, error_class=None):
         'elapsed': round(elapsed, 3),
         'startup_seconds': round(time.monotonic() - PROCESS_START_TIME, 3),
         'error_class': error_class or 'none',
+        'patch_ops': patch_ops,
     }
     try:
         with open(timing_file, 'a') as f:
             f.write(json.dumps(record) + '\n')
     except Exception:
         pass
+
+
+def resolve_param(resource, annotation, key, default, fallback):
+    """
+    Mirrors the precedence the role's loop variables used to implement with
+    json_query/default chains: resource annotation, then a top level key on
+    the resource, then the caller's default, then a hard fallback
+    """
+    annotations = resource.get('metadata', {}).get('annotations', {}) or {}
+    value = annotations.get(annotation)
+    if value:
+        return value
+    value = resource.get(key)
+    if value:
+        return value
+    if default:
+        return default
+    return fallback
+
+
+def reduced_resource(resource):
+    """Small identity block for unchanged resource results
+
+    Unchanged results do not need the full definition, keeping them small
+    stops the register variable from accumulating tens of megabytes over a
+    full cluster run
+    """
+    metadata = resource.get('metadata', {}) if isinstance(resource, dict) else {}
+    return {
+        'kind': resource.get('kind') if isinstance(resource, dict) else None,
+        'metadata': {
+            'name': metadata.get('name'),
+            'namespace': metadata.get('namespace', ''),
+        },
+    }
 
 
 def run_module():
@@ -1646,9 +1706,27 @@ def run_module():
             'required': False,
             'default': {}
         },
+        # Single resource mode (used by the retry path)
         'resource': {
             'type': 'dict',
-            'required': True
+            'required': False
+        },
+        # Batch mode: one module call provisions the whole rendered list.
+        # Per resource failures are returned in results instead of failing
+        # the module, so one bad resource cannot kill its siblings
+        'resources': {
+            'type': 'list',
+            'elements': 'dict',
+            'required': False
+        },
+        # Batch-mode per resource defaults (template / helm chart level)
+        'default_action': {
+            'type': 'str',
+            'required': False
+        },
+        'default_patch_type': {
+            'type': 'str',
+            'required': False
         },
         # Useful when testing...
         'fail_on_change': {
@@ -1668,12 +1746,33 @@ def run_module():
         supports_check_mode=True
     )
 
+    if (module.params.get('resources') is not None) == (module.params.get('resource') is not None):
+        module.fail_json(msg='provide exactly one of resource or resources')
+
     timing_file = os.environ.get('OPENSHIFT_PROVISION_TIMING_FILE', '')
+
+    if module.params.get('resources') is not None:
+        run_module_batch(module, timing_file)
+        return
+
     provisioner = None
     start = time.monotonic()
     try:
         provisioner = OpenShiftProvision(module)
         provisioner.provision()
+    except OcError as e:
+        elapsed = time.monotonic() - start
+        result = dict(e.result)
+        result.setdefault('error_class', classify_error(result.get('msg', '')))
+        if result.get('error_class') == 'auth':
+            result['auth_failure'] = True
+        result['traceback'] = traceback.format_exc().split('\n')
+        if provisioner is not None:
+            result['action'] = provisioner.action
+        record_timing(timing_file, provisioner,
+                      provisioner.action if provisioner is not None else None,
+                      elapsed, result.get('error_class'))
+        module.fail_json(**result)
     except Exception as e:
         elapsed = time.monotonic() - start
         # Do not return the full resource here!
@@ -1702,6 +1801,119 @@ def run_module():
         resource=provisioner.resource,
         oc_calls=provisioner.oc_calls,
         oc_seconds=round(provisioner.oc_seconds, 3)
+    )
+
+
+def run_module_batch(module, timing_file):
+    """Batch mode: provision a whole rendered resource list in one call"""
+    resources = module.params['resources']
+    results = []
+    any_changed = False
+    any_failed = False
+    start = time.monotonic()
+
+    for res in resources:
+        action = resolve_param(res, 'openshift-provision/action', 'action',
+                               module.params.get('default_action'), 'apply')
+        patch_type = resolve_param(res, 'openshift-provision/patch-type', 'patch_type',
+                                   module.params.get('default_patch_type'), 'strategic')
+
+        if action == 'ignore':
+            results.append({
+                'changed': False,
+                'skipped': True,
+                'action': 'ignore',
+                'resource': reduced_resource(res),
+            })
+            continue
+
+        r_start = time.monotonic()
+        provisioner = None
+        try:
+            provisioner = OpenShiftProvision(
+                module, copy.deepcopy(res), action=action, patch_type=patch_type
+            )
+            provisioner.provision()
+        except OcError as e:
+            any_failed = True
+            error_class = e.result.get('error_class', classify_error(e.result.get('msg', '')))
+            results.append({
+                'failed': True,
+                'resource': res,
+                'invocation': {'module_args': {
+                    'action': action,
+                    'patch_type': patch_type,
+                    'namespace': module.params.get('namespace'),
+                }},
+                'msg': e.result.get('msg', ''),
+                'error_class': error_class,
+                'auth_failure': error_class == 'auth',
+            })
+            record_timing(timing_file, provisioner, action,
+                          time.monotonic() - r_start, error_class)
+            continue
+        except Exception as e:
+            any_failed = True
+            error_class = classify_error(str(e))
+            results.append({
+                'failed': True,
+                'resource': res,
+                'invocation': {'module_args': {
+                    'action': action,
+                    'patch_type': patch_type,
+                    'namespace': module.params.get('namespace'),
+                }},
+                'msg': str(e),
+                'error_class': error_class,
+                'auth_failure': error_class == 'auth',
+            })
+            record_timing(timing_file, provisioner, action,
+                          time.monotonic() - r_start, error_class)
+            continue
+
+        any_changed = any_changed or bool(provisioner.changed)
+        if provisioner.changed:
+            # Changed resources keep the full final definition
+            result_resource = provisioner.resource
+        else:
+            result_resource = reduced_resource(res)
+        results.append({
+            'changed': bool(provisioner.changed),
+            'action': provisioner.action,
+            'patch': provisioner.patch,
+            'resource': result_resource,
+        })
+        record_timing(timing_file, provisioner, provisioner.action,
+                      time.monotonic() - r_start)
+
+    elapsed = time.monotonic() - start
+    record = {
+        'timestamp': time.time(),
+        'kind': 'Batch',
+        'namespace': '',
+        'name': '%d resources' % len(resources),
+        'action': 'batch',
+        'changed': any_changed,
+        'oc_calls': 0,
+        'oc_seconds': 0.0,
+        'elapsed': round(elapsed, 3),
+        'startup_seconds': 0.0,
+        'error_class': 'none',
+        'patch_ops': [],
+    }
+    try:
+        if timing_file:
+            with open(timing_file, 'a') as f:
+                f.write(json.dumps(record) + '\n')
+    except Exception:
+        pass
+
+    module.exit_json(
+        action='batch',
+        changed=any_changed,
+        failed=any_failed,
+        failure_count=sum(1 for r in results if r.get('failed')),
+        results=results,
     )
 
 def main():

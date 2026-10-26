@@ -1,36 +1,15 @@
 ---
 - name: Provision cluster resources
   openshift_provision:
-    action: "{{ provision_action }}"
-    patch_type: >-
-      {{
-      provision_resource | json_query('metadata.annotations."openshift-provision/patch-type"')
-      | default(provision_resource.patch_type, true)
-      | default('strategic', true)
-      }}
     connection:
       oc_cmd: "{{ oc_cmd }}"
-    resource: "{{ provision_resource }}"
+    resources: "{{ resource_list }}"
     generate_resources: "{{ generate_resources }}"
-  # Loop over indexes instead of the resources themselves. Ansible prints the
-  # loop item in failed results, and a resource such as a Grafana dashboard
-  # ConfigMap is far too large for the job log
-  loop: "{{ range(0, resource_list | length) | list }}"
-  loop_control:
-    label: "{{ resource_list[item] | resource_label }}"
-  vars:
-    provision_resource: "{{ resource_list[item] }}"
-    provision_action: >-
-      {{
-      provision_resource | json_query('metadata.annotations."openshift-provision/action"')
-      | default(provision_resource.action, true)
-      | default('apply', true)
-      }}
-  when: provision_action != 'ignore'
   register: provision
   changed_when: >-
-    provision | record_change_provision(change_record)
-  ignore_errors: True
+    provision.results | default([], true)
+    | record_change_provision_batch(change_record)
+  ignore_errors: true
 - name: Record new failures
   set_fact:
     provision_failures: >-

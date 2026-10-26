@@ -50,25 +50,25 @@ def format_change_provision(value):
     return change
 
 def record_change(change, change_record):
-    fh = open(change_record, 'a')
-    fh.write("---\n")
-    for k in sorted(change):
-        v = change[k]
-        if isinstance(v, str):
-            fh.write("{}: {}\n".format(k, v))
-        elif k == 'command':
-            fh.write("command: {}\n".format(
-                 ' '.join(v)
-            ))
-        else:
-            fh.write("{}: |\n  {}\n".format(
-                k,
-                json.dumps(
-                    v,
-                    indent=2,
-                    separators=(',', ': ')
-                ).replace("\n", "\n  ")
-            ))
+    with open(change_record, 'a') as fh:
+        fh.write("---\n")
+        for k in sorted(change):
+            v = change[k]
+            if isinstance(v, str):
+                fh.write("{}: {}\n".format(k, v))
+            elif k == 'command':
+                fh.write("command: {}\n".format(
+                     ' '.join(v)
+                ))
+            else:
+                fh.write("{}: |\n  {}\n".format(
+                    k,
+                    json.dumps(
+                        v,
+                        indent=2,
+                        separators=(',', ': ')
+                    ).replace("\n", "\n  ")
+                ))
 
 def record_change_command(value, change_record=''):
     if change_record:
@@ -86,6 +86,26 @@ def record_change_provision(value, change_record=''):
         )
     return value['changed']
 
+def record_change_provision_batch(results, change_record=''):
+    """Record change entries for every changed result in a batch result set
+
+    Returns whether any resource changed so it can drive changed_when. Only
+    results with changed=true are inspected, so the register accumulation for
+    unchanged resources stays cheap
+    """
+    changed_any = False
+    if not isinstance(results, list):
+        return False
+    for value in results:
+        if isinstance(value, dict) and value.get('changed'):
+            changed_any = True
+            if change_record:
+                record_change(
+                    format_change_provision(value),
+                    change_record
+                )
+    return changed_any
+
 class FilterModule(object):
     '''
     custom jinja2 filters for working with collections
@@ -94,5 +114,6 @@ class FilterModule(object):
     def filters(self):
         return {
             'record_change_command': record_change_command,
-            'record_change_provision': record_change_provision
+            'record_change_provision': record_change_provision,
+            'record_change_provision_batch': record_change_provision_batch
         }
