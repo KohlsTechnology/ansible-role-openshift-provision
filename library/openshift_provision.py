@@ -349,6 +349,21 @@ def normalize_resource_units(item):
     if 'cpu' in item:
         item['cpu'] = normalize_cpu_units(item['cpu'])
 
+def strip_schema_descriptions(obj):
+    """
+    Server side generated CRD schemas carry descriptions that differ from
+    (or are absent in) config rendered schemas. They carry no policy value
+    and caused perpetual drift on operator managed CRDs
+    """
+    if isinstance(obj, dict):
+        obj.pop('description', None)
+        for value in obj.values():
+            strip_schema_descriptions(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            strip_schema_descriptions(item)
+
+
 def merge_dict(merged, patch, overwrite=True):
     """
     Given a dictionary and a patch, apply patch to the dictionary.
@@ -1277,6 +1292,7 @@ class OpenShiftProvision:
                         "kubectl.kubernetes.io/last-applied-configuration": ""
                     },
                     "creationTimestamp": "",
+                    "finalizers": [],
                     "generation": 0,
                     "namespace": "",
                     "resourceVersion": 0,
@@ -1368,6 +1384,39 @@ class OpenShiftProvision:
 
     def normalize_resource_SecurityContextConstraints(self, resource):
         normalize_SecurityContextConstraints_V1(resource)
+
+    def normalize_resource_CustomResourceDefinition(self, resource):
+        merge_dict(
+            resource,
+            {
+                "metadata": {
+                    "annotations": {
+                        "controller-gen.kubebuilder.io/version": ""
+                    },
+                    "ownerReferences": []
+                }
+            },
+            overwrite=True
+        )
+        resource.get('spec', {}).pop('conversion', None)
+        for version in resource.get('spec', {}).get('versions', []) or []:
+            schema = version.get('schema', {}).get('openAPIV3Schema')
+            if isinstance(schema, dict):
+                strip_schema_descriptions(schema)
+
+    def normalize_resource_KubeletConfig(self, resource):
+        # The MCO adds the mc-name-suffix annotation server side
+        merge_dict(
+            resource,
+            {
+                "metadata": {
+                    "annotations": {
+                        "machineconfiguration.openshift.io/mc-name-suffix": ""
+                    }
+                }
+            },
+            overwrite=True
+        )
 
     def normalize_resource_Service(self, resource):
         normalize_Service_V1(resource)
