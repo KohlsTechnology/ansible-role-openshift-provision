@@ -31,6 +31,8 @@ TRANSIENT_ERROR_MARKERS = (
     'connection reset by peer',
     'no matches for kind',
     'ensure CRDs are installed first',
+    'failed calling webhook',
+    'Internal error occurred',
 )
 
 FORBIDDEN_ERROR_MARKERS = (
@@ -62,29 +64,25 @@ def classify_error(*values):
     """Classify oc output into an error bucket.
 
     Buckets: auth, transient, forbidden, notfound, validation, unknown
+    Matching is now case insensitive
     """
-    for value in values:
-        if not value:
-            continue
-        text = str(value)
+    texts = [str(value).lower() for value in values if value]
+    for text in texts:
         for marker in AUTH_ERROR_MARKERS:
-            if marker in text:
+            if marker.lower() in text:
                 return 'auth'
-    for value in values:
-        if not value:
-            continue
-        text = str(value)
+    for text in texts:
         for marker in TRANSIENT_ERROR_MARKERS:
-            if marker in text:
+            if marker.lower() in text:
                 return 'transient'
         for marker in FORBIDDEN_ERROR_MARKERS:
-            if marker in text:
+            if marker.lower() in text:
                 return 'forbidden'
         for marker in NOTFOUND_ERROR_MARKERS:
-            if marker in text:
+            if marker.lower() in text:
                 return 'notfound'
         for marker in VALIDATION_ERROR_MARKERS:
-            if marker in text:
+            if marker.lower() in text:
                 return 'validation'
     return 'unknown'
 

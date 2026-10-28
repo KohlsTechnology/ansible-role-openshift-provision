@@ -1,22 +1,21 @@
 ---
 - name: provision-retry
   block:
-    # validation/notfound/forbidden cannot succeed on retry so
-    # only transient and unknown errors are worth retrying.
+    # validation/forbidden cannot succeed on retry so only those are permanent
     # Permanent failures accumulate and fail the run at the
-    # end with a single clean report
+    # end with a single clean report 
+    # retryable failures consume retry rounds and resources that never 
+    # succeed are still reported there
     - name: Separate permanent failures from retryable failures
       set_fact:
         provision_failures_permanent: >-
           {{ provision_failures_permanent | default([])
              + (provision_failures
-                | selectattr('error_class', 'in',
-                             ['validation', 'notfound', 'forbidden'])
+                | selectattr('error_class', 'in', ['validation', 'forbidden'])
                 | list) }}
         provision_failures: >-
           {{ provision_failures
-             | rejectattr('error_class', 'in',
-                          ['validation', 'notfound', 'forbidden'])
+             | rejectattr('error_class', 'in', ['validation', 'forbidden'])
              | list }}
     - name: increment retry count
       set_fact:
