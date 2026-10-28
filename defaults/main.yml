@@ -9,3 +9,7 @@ openshift_provision_change_record: ''
 openshift_provision_cluster_vars: {}
 
 generate_resources: false
+
+# When true, provisioning failures are collected into facts and reported
+# by the caller instead of failing the play
+openshift_provision_report_only: false

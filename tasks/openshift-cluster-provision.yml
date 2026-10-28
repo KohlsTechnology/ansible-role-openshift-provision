@@ -67,12 +67,17 @@
           "{{ openshift_cluster.resource_path
               | default(openshift_resource_path) }}"
 
+    # In report only mode (first pass of a two pass run), dependency
+    # failures are collected into facts and the readiness gate in
+    # decides what happens next
     - name: Check for failures
       fail:
         msg: >-
           {{ provision_failures
              | map(attribute='msg') | list | join('\n---\n') }}
-      when: provision_failures | length > 0
+      when: >-
+        provision_failures | length > 0 and
+        not (openshift_provision_report_only | default(false) | bool)
 
   rescue:
     - name: Check retry limit
@@ -92,10 +97,14 @@
           - {{ failure | resource_label }}:
             {{ failure.msg | default('failed') }}
           {% endfor %}
-      when: provision_failures_permanent | length > 0
+      when: >-
+        provision_failures_permanent | length > 0 and
+        not (openshift_provision_report_only | default(false) | bool)
     - name: Check unhandled failures
       fail:
         msg: >-
           {{ provision_failures_skipped
              | map(attribute='msg') | list | join('\n---\n') }}
-      when: provision_failures_skipped | length > 0
+      when: >-
+        provision_failures_skipped | length > 0 and
+        not (openshift_provision_report_only | default(false) | bool)
