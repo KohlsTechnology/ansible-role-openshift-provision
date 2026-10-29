@@ -13,3 +13,4 @@ generate_resources: false
 # When true, provisioning failures are collected into facts and reported
 # by the caller instead of failing the play
 openshift_provision_report_only: false
+provision_defer_unavailable_kinds: false
