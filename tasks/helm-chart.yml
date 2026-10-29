@@ -102,6 +102,9 @@
       oc_cmd: "{{ oc_cmd }}"
     namespace: "{{ project.name if project is defined else '' }}"
     resources: "{{ helm_resource_list }}"
+    defer_unavailable_kinds:
+      "{{ provision_defer_unavailable_kinds | default(false) }}"
+    available_kinds: "{{ openshift_api_kinds | default([]) }}"
     default_action: "{{ helm_chart.action | default(omit) }}"
     default_patch_type: "{{ helm_chart.patch_type | default(omit) }}"
     generate_resources: "{{ generate_resources }}"
@@ -110,6 +113,12 @@
     provision.results | default([], true)
     | record_change_provision_batch(change_record)
   ignore_errors: true
+- name: Record deferred resources
+  set_fact:
+    provision_deferred_count: >-
+      {{ (provision_deferred_count | default(0) | int)
+         + (provision.deferred_count | default(0) | int) }}
+
 - name: Record new failures for helm chart resources
   set_fact:
     provision_failures: >-

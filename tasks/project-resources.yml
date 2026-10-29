@@ -6,6 +6,9 @@
     namespace: "{{ project.name }}"
     resources: "{{ resource_list }}"
     generate_resources: "{{ generate_resources }}"
+    defer_unavailable_kinds:
+      "{{ provision_defer_unavailable_kinds | default(false) }}"
+    available_kinds: "{{ openshift_api_kinds | default([]) }}"
   register: provision
   changed_when: >-
     provision.results | default([], true)
@@ -20,6 +23,11 @@
             | selectattr('failed', 'equalto', true)
             | map('record_failure')
             | list) }}
+- name: Record deferred resources for {{ project.name }}
+  set_fact:
+    provision_deferred_count: >-
+      {{ (provision_deferred_count | default(0) | int)
+         + (provision.deferred_count | default(0) | int) }}
 - set_fact:
     provision_failures_skipped: "{{ provision_failures_skipped + [provision] }}"
   when: "'results' not in provision"

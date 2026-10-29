@@ -1232,10 +1232,7 @@ class OpenShiftProvision:
         return (rc, stdout, stderr)
 
     def get_grouped_kind(self):
-        if '/' in self.resource['apiVersion']:
-            return self.resource['kind'] + '.' + self.resource['apiVersion'].split('/')[0]
-        else:
-            return self.resource['kind']
+        return grouped_kind(self.resource)
 
     def get_current_resource(self):
         command = ['get', self.get_grouped_kind(), self.resource['metadata']['name'], '-o', 'json']
@@ -1663,10 +1660,16 @@ class OpenShiftProvision:
                 command += ['--save-config']
             self.run_oc(command, data=json.dumps(self.resource), check_rc=True)
 
-def record_timing(timing_file, provisioner, action, elapsed, error_class=None):
+def record_timing(timing_file, provisioner, action, elapsed, error_class=None,
+                  deferred=False, resource=None):
     if not timing_file:
         return
-    resource = provisioner.resource if provisioner is not None else {}
+    if provisioner is not None:
+        resource = provisioner.resource
+    elif resource is not None:
+        resource = resource
+    else:
+        resource = {}
     metadata = resource.get('metadata', {}) if isinstance(resource, dict) else {}
     patch_ops = []
     patch = provisioner.patch if provisioner is not None else None
@@ -1689,6 +1692,7 @@ def record_timing(timing_file, provisioner, action, elapsed, error_class=None):
         'elapsed': round(elapsed, 3),
         'startup_seconds': round(time.monotonic() - PROCESS_START_TIME, 3),
         'error_class': error_class or 'none',
+        'deferred': bool(deferred),
         'patch_ops': patch_ops,
     }
     try:
@@ -1714,6 +1718,16 @@ def resolve_param(resource, annotation, key, default, fallback):
     if default:
         return default
     return fallback
+
+
+def grouped_kind(resource):
+    """The grouped kind (Kind.group, or bare Kind for core resources) that
+    oc uses to address the resource; matches get_grouped_kind()."""
+    kind = resource.get('kind', '') if isinstance(resource, dict) else ''
+    api_version = resource.get('apiVersion', '') if isinstance(resource, dict) else ''
+    if '/' in api_version:
+        return kind + '.' + api_version.split('/')[0]
+    return kind
 
 
 def reduced_resource(resource):
@@ -1771,6 +1785,19 @@ def run_module():
         'default_action': {
             'type': 'str',
             'required': False
+        },
+        # skip resources whose kind is not served by the API yet 
+        # pass 2 applies them oncethe operators have established their CRDs
+        'defer_unavailable_kinds': {
+            'type': 'bool',
+            'required': False,
+            'default': False
+        },
+        'available_kinds': {
+            'type': 'list',
+            'elements': 'str',
+            'required': False,
+            'default': None
         },
         'default_patch_type': {
             'type': 'str',
@@ -1858,6 +1885,9 @@ def run_module_batch(module, timing_file):
     results = []
     any_changed = False
     any_failed = False
+    deferred_count = 0
+    available_kinds = module.params.get('available_kinds') or []
+    defer_kinds = bool(module.params.get('defer_unavailable_kinds')) and bool(available_kinds)
     start = time.monotonic()
 
     for res in resources:
@@ -1873,6 +1903,20 @@ def run_module_batch(module, timing_file):
                 'action': 'ignore',
                 'resource': reduced_resource(res),
             })
+            continue
+        
+        gk = grouped_kind(res)
+        if defer_kinds and gk not in available_kinds:
+            deferred_count += 1
+            results.append({
+                'deferred': True,
+                'changed': False,
+                'skipped': True,
+                'action': action,
+                'resource': reduced_resource(res),
+            })
+            record_timing(timing_file, None, action, 0.0, 'none',
+                          deferred=True, resource=res)
             continue
 
         r_start = time.monotonic()
@@ -1942,6 +1986,7 @@ def run_module_batch(module, timing_file):
         'name': '%d resources' % len(resources),
         'action': 'batch',
         'changed': any_changed,
+        'deferred_count': deferred_count,
         'oc_calls': 0,
         'oc_seconds': 0.0,
         'elapsed': round(elapsed, 3),
@@ -1961,6 +2006,7 @@ def run_module_batch(module, timing_file):
         changed=any_changed,
         failed=any_failed,
         failure_count=sum(1 for r in results if r.get('failed')),
+        deferred_count=deferred_count,
         results=results,
     )
 

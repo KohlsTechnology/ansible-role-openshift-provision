@@ -10,9 +10,22 @@
         provision_failures: []
         provision_failures_skipped: []
         provision_failures_permanent: []
+        provision_deferred_count: 0
     - name: init retry count
       set_fact:
         retry_count: 0
+    - name: Snapshot available API kinds for kind-availability deferral
+      shell: >-
+        {{ oc_cmd }} api-resources --no-headers | awk '{
+          if ($4 == "") print $3;
+          else print $3 "." $4 }' | sort -u
+      register: api_kinds_snapshot
+      changed_when: false
+      failed_when: false
+    - name: Set available API kinds fact
+      set_fact:
+        openshift_api_kinds:
+          "{{ api_kinds_snapshot.stdout_lines | default([]) }}"
 
     - name: Handle cluster_resources
       include_tasks: cluster-resources.yml
