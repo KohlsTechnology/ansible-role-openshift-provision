@@ -1786,16 +1786,18 @@ def run_module():
             'type': 'str',
             'required': False
         },
-        # skip resources whose kind is not served by the API yet 
-        # pass 2 applies them oncethe operators have established their CRDs
+        # Kind-availability deferral (two-pass mode, pass 1): skip resources
+        # whose kind is not served by the API yet
+        # pass 2 applies them once the operators have established their CRDs
         'defer_unavailable_kinds': {
             'type': 'bool',
             'required': False,
             'default': False
         },
-        'available_kinds': {
-            'type': 'list',
-            'elements': 'str',
+        # API discovery documents (raw /api/v1 + /apis JSON merged into one
+        # hash with "resources" and "groups" keys)
+        'discovery': {
+            'type': 'dict',
             'required': False,
             'default': None
         },
@@ -1886,7 +1888,23 @@ def run_module_batch(module, timing_file):
     any_changed = False
     any_failed = False
     deferred_count = 0
-    available_kinds = module.params.get('available_kinds') or []
+    available_kinds = set()
+    discovery = module.params.get('discovery') or {}
+    if discovery:
+        try:
+            for r in discovery.get('resources') or []:
+                k = r.get('kind') if isinstance(r, dict) else None
+                if k:
+                    available_kinds.add(k)
+            for g in discovery.get('groups') or []:
+                for v in g.get('versions') or []:
+                    group = (v.get('groupVersion') or '').split('/')[0]
+                    for r in v.get('resources') or []:
+                        k = r.get('kind') if isinstance(r, dict) else None
+                        if k:
+                            available_kinds.add(k + '.' + group)
+        except Exception:
+            available_kinds = set()
     defer_kinds = bool(module.params.get('defer_unavailable_kinds')) and bool(available_kinds)
     start = time.monotonic()
 

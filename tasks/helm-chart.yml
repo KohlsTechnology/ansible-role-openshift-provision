@@ -104,7 +104,7 @@
     resources: "{{ helm_resource_list }}"
     defer_unavailable_kinds:
       "{{ provision_defer_unavailable_kinds | default(false) }}"
-    available_kinds: "{{ openshift_api_kinds | default([]) }}"
+    discovery: "{{ api_discovery | default({}) }}"
     default_action: "{{ helm_chart.action | default(omit) }}"
     default_patch_type: "{{ helm_chart.patch_type | default(omit) }}"
     generate_resources: "{{ generate_resources }}"

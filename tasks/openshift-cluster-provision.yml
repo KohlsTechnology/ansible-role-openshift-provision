@@ -14,18 +14,17 @@
     - name: init retry count
       set_fact:
         retry_count: 0
-    - name: Snapshot available API kinds for kind-availability deferral
+    - name: Fetch API discovery documents for kind-availability deferral
       shell: >-
-        {{ oc_cmd }} api-resources --no-headers | awk '{
-          if ($4 == "") print $3;
-          else print $3 "." $4 }' | sort -u
-      register: api_kinds_snapshot
+        {{ oc_cmd }} get --raw /api/v1 > api_discovery_core.json 2>/dev/null;
+        {{ oc_cmd }} get --raw /apis > api_discovery_groups.json 2>/dev/null
       changed_when: false
       failed_when: false
-    - name: Set available API kinds fact
-      set_fact:
-        openshift_api_kinds:
-          "{{ api_kinds_snapshot.stdout_lines | default([]) }}"
+    - name: Load API discovery documents
+      include_vars:
+        name: api_discovery
+        files_matching: ^api_discovery.*\.json$
+        dir: "{{ playbook_dir }}"
 
     - name: Handle cluster_resources
       include_tasks: cluster-resources.yml
