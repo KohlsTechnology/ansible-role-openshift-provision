@@ -2005,6 +2005,7 @@ def run_module_batch(module, timing_file):
         'action': 'batch',
         'changed': any_changed,
         'deferred_count': deferred_count,
+        'available_kinds_count': len(available_kinds),
         'oc_calls': 0,
         'oc_seconds': 0.0,
         'elapsed': round(elapsed, 3),
