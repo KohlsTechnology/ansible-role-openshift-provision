@@ -3,6 +3,33 @@
 - set_fact:
     provision_retry_limit: "{{ 0 if provision_retry_limit is undefined else provision_retry_limit }}"
     provision_retry_wait_seconds: "{{ 5 if provision_retry_wait_seconds is undefined else provision_retry_wait_seconds }}"
+
+# Preventing tokens from being printed in stdout
+- name: Write provisioner kubeconfig
+  copy:
+    content: |
+      apiVersion: v1
+      kind: Config
+      clusters:
+      - name: cluster
+        cluster:
+          insecure-skip-tls-verify: true
+          server: {{ openshift_connection_server | quote }}
+      contexts:
+      - name: default
+        context:
+          cluster: cluster
+          user: provisioner
+      current-context: default
+      users:
+      - name: provisioner
+        user:
+          token: {{ openshift_connection_token | quote }}
+    dest: "{{ playbook_dir }}/.kubeconfig-{{ (openshift_connection_server | default('cluster')) | hash('sha1') }}"
+    mode: "0600"
+    no_log: true
+  when: openshift_connection_token is defined and openshift_connection_token | length > 0
+
 - name: Handle openshift_clusters
   include_tasks: openshift-cluster.yml
   loop: >-
@@ -16,8 +43,14 @@
       {{ openshift_cluster.change_record
        | default(openshift_provision_change_record)
       }}
+    kubeconfig_path: >-
+      {{ playbook_dir }}/.kubeconfig-{{ (openshift_connection_server
+         | default('cluster')) | hash('sha1') }}
     oc_cmd_opt: >-
       {{ oc_cmd_base }}
+      {% if openshift_connection_token is defined and openshift_connection_token | length > 0 %}
+      --kubeconfig={{ kubeconfig_path | trim | quote }}
+      {% else %}
       {% if openshift_connection_certificate_authority is defined %}
       --certificate-authority={{ openshift_connection_certificate_authority | quote }}
       {% endif %}
@@ -29,6 +62,7 @@
       {% endif %}
       {% if openshift_connection_token is defined %}
       --token={{ openshift_connection_token | quote }}
+      {% endif %}
       {% endif %}
       {% if openshift_cluster.connection is defined %}
       {% for key, value in openshift_cluster.connection.items() %}
