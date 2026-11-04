@@ -4,30 +4,18 @@
     provision_retry_limit: "{{ 0 if provision_retry_limit is undefined else provision_retry_limit }}"
     provision_retry_wait_seconds: "{{ 5 if provision_retry_wait_seconds is undefined else provision_retry_wait_seconds }}"
 
-# Preventing tokens from being printed in stdout
+- name: Build provisioner kubeconfig content
+  no_log: true
+  set_fact:
+    kubeconfig_content: "{{ lookup('template', 'kubeconfig.yaml.j2') }}"
+  when: openshift_connection_token is defined and openshift_connection_token | length > 0
+
 - name: Write provisioner kubeconfig
+  no_log: true
   copy:
-    content: |
-      apiVersion: v1
-      kind: Config
-      clusters:
-      - name: cluster
-        cluster:
-          insecure-skip-tls-verify: true
-          server: {{ openshift_connection_server | quote }}
-      contexts:
-      - name: default
-        context:
-          cluster: cluster
-          user: provisioner
-      current-context: default
-      users:
-      - name: provisioner
-        user:
-          token: {{ openshift_connection_token | quote }}
+    content: "{{ kubeconfig_content }}"
     dest: "{{ playbook_dir }}/.kubeconfig-{{ (openshift_connection_server | default('cluster')) | hash('sha1') }}"
     mode: "0600"
-    no_log: true
   when: openshift_connection_token is defined and openshift_connection_token | length > 0
 
 - name: Handle openshift_clusters
