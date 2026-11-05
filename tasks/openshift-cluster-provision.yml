@@ -14,17 +14,36 @@
     - name: init retry count
       set_fact:
         retry_count: 0
-    - name: Fetch API discovery documents for kind-availability deferral
-      shell: >-
-        {{ oc_cmd }} get --raw /api/v1 > api_discovery_core.json 2>/dev/null;
-        {{ oc_cmd }} get --raw /apis > api_discovery_groups.json 2>/dev/null
+    - name: Collect the API discovery snapshot for kind-availability deferral
+      command:
+        argv:
+          - python3
+          - "{{ role_path }}/files/collect_api_discovery.py"
+          - "{{ oc_cmd }}"
+          - "{{ playbook_dir }}/api_discovery.json"
+      register: api_discovery_raw
       changed_when: false
       failed_when: false
-    - name: Load API discovery documents
-      include_vars:
-        name: api_discovery
-        files_matching: ^api_discovery.*\.json$
-        dir: "{{ playbook_dir }}"
+      # The login path puts --token= in oc_cmd, never print the argv 
+      no_log: "{{ openshift_login_enabled | default(false) | bool }}"
+    - name: Load the API discovery snapshot
+      set_fact:
+        api_discovery: >-
+          {{ (api_discovery_raw.stdout | from_json)
+             if (api_discovery_raw.rc | default(1) | int == 0
+                 and (api_discovery_raw.stdout | default('') | trim | length) > 0)
+             else {} }}
+    - name: Report the API discovery snapshot
+      debug:
+        msg: >-
+          API discovery: {{ api_discovery.summary.core_kinds | default(0) }}
+          core kinds, {{ api_discovery.summary.group_kinds | default(0) }}
+          grouped kinds from {{ api_discovery.summary.group_versions | default(0) }}
+          group versions ({{ api_discovery.summary.error_count | default(0) }}
+          fetch error(s)); kind-availability deferral
+          {{ 'enabled' if (provision_defer_unavailable_kinds | default(false) | bool)
+                          and (api_discovery.summary.ok | default(false) | bool)
+             else 'disabled (discovery incomplete, failing open)' }}.
 
     - name: Handle cluster_resources
       include_tasks: cluster-resources.yml

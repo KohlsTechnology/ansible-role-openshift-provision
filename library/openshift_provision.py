@@ -1905,7 +1905,11 @@ def run_module_batch(module, timing_file):
                             available_kinds.add(k + '.' + group)
         except Exception:
             available_kinds = set()
-    defer_kinds = bool(module.params.get('defer_unavailable_kinds')) and bool(available_kinds)
+    core_kinds = {k for k in available_kinds if '.' not in k}
+    grouped_kinds = available_kinds - core_kinds
+    discovery_usable = bool(core_kinds) and bool(grouped_kinds)
+    defer_kinds = (bool(module.params.get('defer_unavailable_kinds'))
+                   and discovery_usable)
     start = time.monotonic()
 
     for res in resources:
@@ -2006,6 +2010,8 @@ def run_module_batch(module, timing_file):
         'changed': any_changed,
         'deferred_count': deferred_count,
         'available_kinds_count': len(available_kinds),
+        'available_core_kinds_count': len(core_kinds),
+        'available_grouped_kinds_count': len(grouped_kinds),
         'oc_calls': 0,
         'oc_seconds': 0.0,
         'elapsed': round(elapsed, 3),
@@ -2026,6 +2032,11 @@ def run_module_batch(module, timing_file):
         failed=any_failed,
         failure_count=sum(1 for r in results if r.get('failed')),
         deferred_count=deferred_count,
+        available_kinds_count=len(available_kinds),
+        available_core_kinds_count=len(core_kinds),
+        available_grouped_kinds_count=len(grouped_kinds),
+        discovery_usable=discovery_usable,
+        defer_enabled=defer_kinds,
         results=results,
     )
 
