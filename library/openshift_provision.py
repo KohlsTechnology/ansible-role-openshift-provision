@@ -1949,8 +1949,23 @@ def run_module_batch(module, timing_file):
             )
             provisioner.provision()
         except OcError as e:
-            any_failed = True
             error_class = e.result.get('error_class', classify_error(e.result.get('msg', '')))
+            if (error_class == 'notfound'
+                    and action == 'patch'
+                    and module.params.get('defer_unavailable_kinds')):
+                deferred_count += 1
+                results.append({
+                    'deferred': True,
+                    'changed': False,
+                    'skipped': True,
+                    'action': action,
+                    'resource': reduced_resource(res),
+                })
+                record_timing(timing_file, provisioner, action,
+                              time.monotonic() - r_start, 'notfound',
+                              deferred=True, resource=res)
+                continue
+            any_failed = True
             results.append({
                 'failed': True,
                 'resource': res,
@@ -1967,8 +1982,23 @@ def run_module_batch(module, timing_file):
                           time.monotonic() - r_start, error_class)
             continue
         except Exception as e:
-            any_failed = True
             error_class = classify_error(str(e))
+            if (error_class == 'notfound'
+                    and action == 'patch'
+                    and module.params.get('defer_unavailable_kinds')):
+                deferred_count += 1
+                results.append({
+                    'deferred': True,
+                    'changed': False,
+                    'skipped': True,
+                    'action': action,
+                    'resource': reduced_resource(res),
+                })
+                record_timing(timing_file, provisioner, action,
+                              time.monotonic() - r_start, 'notfound',
+                              deferred=True, resource=res)
+                continue
+            any_failed = True
             results.append({
                 'failed': True,
                 'resource': res,
