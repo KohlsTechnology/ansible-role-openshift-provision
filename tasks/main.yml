@@ -3,6 +3,21 @@
 - set_fact:
     provision_retry_limit: "{{ 0 if provision_retry_limit is undefined else provision_retry_limit }}"
     provision_retry_wait_seconds: "{{ 5 if provision_retry_wait_seconds is undefined else provision_retry_wait_seconds }}"
+
+- name: Build provisioner kubeconfig content
+  no_log: true
+  set_fact:
+    kubeconfig_content: "{{ lookup('template', 'kubeconfig.yaml.j2') }}"
+  when: openshift_connection_token is defined and openshift_connection_token | length > 0
+
+- name: Write provisioner kubeconfig
+  no_log: true
+  copy:
+    content: "{{ kubeconfig_content }}"
+    dest: "{{ playbook_dir }}/.kubeconfig-{{ (openshift_connection_server | default('cluster')) | hash('sha1') }}"
+    mode: "0600"
+  when: openshift_connection_token is defined and openshift_connection_token | length > 0
+
 - name: Handle openshift_clusters
   include_tasks: openshift-cluster.yml
   loop: >-
@@ -16,8 +31,14 @@
       {{ openshift_cluster.change_record
        | default(openshift_provision_change_record)
       }}
+    kubeconfig_path: >-
+      {{ playbook_dir }}/.kubeconfig-{{ (openshift_connection_server
+         | default('cluster')) | hash('sha1') }}
     oc_cmd_opt: >-
       {{ oc_cmd_base }}
+      {% if openshift_connection_token is defined and openshift_connection_token | length > 0 %}
+      --kubeconfig={{ kubeconfig_path | trim | quote }}
+      {% else %}
       {% if openshift_connection_certificate_authority is defined %}
       --certificate-authority={{ openshift_connection_certificate_authority | quote }}
       {% endif %}
@@ -29,6 +50,7 @@
       {% endif %}
       {% if openshift_connection_token is defined %}
       --token={{ openshift_connection_token | quote }}
+      {% endif %}
       {% endif %}
       {% if openshift_cluster.connection is defined %}
       {% for key, value in openshift_cluster.connection.items() %}

@@ -47,6 +47,7 @@ def record_failure(result):
         'invocation': {'module_args': module_args},
         'msg': result.get('msg', ''),
         'auth_failure': bool(result.get('auth_failure', False)),
+        'error_class': result.get('error_class', 'unknown'),
     }
 
 

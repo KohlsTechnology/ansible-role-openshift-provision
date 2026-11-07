@@ -5,6 +5,9 @@ import json
 import os
 import re
 import tempfile
+import time
+
+PROCESS_START_TIME = time.monotonic()
 import traceback
 import types
 
@@ -16,16 +19,72 @@ AUTH_ERROR_MARKERS = (
     'Unauthorized',
 )
 
+TRANSIENT_ERROR_MARKERS = (
+    '429',
+    '503',
+    '504',
+    'etcdserver',
+    'connection refused',
+    'i/o timeout',
+    'TLS handshake timeout',
+    'the server was unable to return a response',
+    'connection reset by peer',
+    'no matches for kind',
+    'ensure CRDs are installed first',
+    'failed calling webhook',
+    'Internal error occurred',
+)
+
+FORBIDDEN_ERROR_MARKERS = (
+    'forbidden',
+    'cannot get resource',
+    'cannot create resource',
+)
+
+NOTFOUND_ERROR_MARKERS = (
+    '(NotFound)',
+    'not found',
+)
+
+VALIDATION_ERROR_MARKERS = (
+    'is invalid',
+    'Invalid value',
+    'admission webhook',
+    'denied the request',
+    'unable to recognize',
+)
+
 
 def is_auth_error(*values):
     """Return True when oc output indicates the credentials were rejected."""
-    for value in values:
-        if not value:
-            continue
+    return classify_error(*values) == 'auth'
+
+
+def classify_error(*values):
+    """Classify oc output into an error bucket.
+
+    Buckets: auth, transient, forbidden, notfound, validation, unknown
+    Matching is now case insensitive
+    """
+    texts = [str(value).lower() for value in values if value]
+    for text in texts:
         for marker in AUTH_ERROR_MARKERS:
-            if marker in value:
-                return True
-    return False
+            if marker.lower() in text:
+                return 'auth'
+    for text in texts:
+        for marker in TRANSIENT_ERROR_MARKERS:
+            if marker.lower() in text:
+                return 'transient'
+        for marker in FORBIDDEN_ERROR_MARKERS:
+            if marker.lower() in text:
+                return 'forbidden'
+        for marker in NOTFOUND_ERROR_MARKERS:
+            if marker.lower() in text:
+                return 'notfound'
+        for marker in VALIDATION_ERROR_MARKERS:
+            if marker.lower() in text:
+                return 'validation'
+    return 'unknown'
 
 
 DOCUMENTATION = '''
@@ -288,6 +347,21 @@ def normalize_resource_units(item):
         item['memory'] = normalize_memory_units(item['memory'])
     if 'cpu' in item:
         item['cpu'] = normalize_cpu_units(item['cpu'])
+
+def strip_schema_descriptions(obj):
+    """
+    Server side generated CRD schemas carry descriptions that differ from
+    (or are absent in) config rendered schemas. They carry no policy value
+    and caused perpetual drift on operator managed CRDs
+    """
+    if isinstance(obj, dict):
+        obj.pop('description', None)
+        for value in obj.values():
+            strip_schema_descriptions(value)
+    elif isinstance(obj, list):
+        for item in obj:
+            strip_schema_descriptions(item)
+
 
 def merge_dict(merged, patch, overwrite=True):
     """
@@ -1075,16 +1149,33 @@ def normalize_VolumeList_V1(volumes):
 def normalize_VolumeMountList_V1(volume_mount_list):
     mark_list_with_keys(volume_mount_list, 'name')
 
+class OcError(Exception):
+    """Raised when an oc invocation fails and carries the full failure result
+
+    Replaces module.fail_json inside run_oc so that batch mode can capture
+    per resource failures without aborting the whole batch. Single mode
+    catches this in run_module and converts it to fail_json
+    """
+
+    def __init__(self, result):
+        super().__init__(result.get('msg', 'oc command failed'))
+        self.result = result
+
+
 class OpenShiftProvision:
-    def __init__(self, module):
+    def __init__(self, module, resource=None, action=None, patch_type=None):
+        if resource is None:
+            resource = module.params['resource']
         self.module = module
         self.changed = False
-        self.action = module.params['action']
+        self.action = action if action is not None else module.params['action']
         self.fail_on_change = module.params['fail_on_change']
         self.patch = None
-        self.patch_type = module.params['patch_type']
-        self.resource = module.params['resource']
+        self.patch_type = patch_type if patch_type is not None else module.params['patch_type']
+        self.resource = resource
         self.generate_resources = module.params['generate_resources']
+        self.oc_calls = 0
+        self.oc_seconds = 0.0
 
         if not 'kind' in self.resource:
             raise Exception('resource must define kind')
@@ -1118,9 +1209,12 @@ class OpenShiftProvision:
 
     def run_oc(self, args, **kwargs):
         check_rc = kwargs.pop('check_rc', False)
+        start = time.monotonic()
         (rc, stdout, stderr) = self.module.run_command(
             self.oc_cmd + args, check_rc=False, **kwargs
         )
+        self.oc_calls += 1
+        self.oc_seconds += time.monotonic() - start
 
         if rc != 0 and check_rc:
             result = {
@@ -1129,18 +1223,16 @@ class OpenShiftProvision:
                 'stderr': stderr,
                 'msg': heuristic_log_sanitize(stderr.rstrip(), self.module.no_log_values)
                 if stderr else 'oc command failed',
+                'error_class': classify_error(stderr, stdout),
             }
-            if is_auth_error(stderr, stdout):
+            if result['error_class'] == 'auth':
                 result['auth_failure'] = True
-            self.module.fail_json(**result)
+            raise OcError(result)
 
         return (rc, stdout, stderr)
 
     def get_grouped_kind(self):
-        if '/' in self.resource['apiVersion']:
-            return self.resource['kind'] + '.' + self.resource['apiVersion'].split('/')[0]
-        else:
-            return self.resource['kind']
+        return grouped_kind(self.resource)
 
     def get_current_resource(self):
         command = ['get', self.get_grouped_kind(), self.resource['metadata']['name'], '-o', 'json']
@@ -1196,6 +1288,7 @@ class OpenShiftProvision:
                         "kubectl.kubernetes.io/last-applied-configuration": ""
                     },
                     "creationTimestamp": "",
+                    "finalizers": [],
                     "generation": 0,
                     "namespace": "",
                     "resourceVersion": 0,
@@ -1287,6 +1380,39 @@ class OpenShiftProvision:
 
     def normalize_resource_SecurityContextConstraints(self, resource):
         normalize_SecurityContextConstraints_V1(resource)
+
+    def normalize_resource_CustomResourceDefinition(self, resource):
+        merge_dict(
+            resource,
+            {
+                "metadata": {
+                    "annotations": {
+                        "controller-gen.kubebuilder.io/version": ""
+                    },
+                    "ownerReferences": []
+                }
+            },
+            overwrite=True
+        )
+        resource.get('spec', {}).pop('conversion', None)
+        for version in resource.get('spec', {}).get('versions', []) or []:
+            schema = version.get('schema', {}).get('openAPIV3Schema')
+            if isinstance(schema, dict):
+                strip_schema_descriptions(schema)
+
+    def normalize_resource_KubeletConfig(self, resource):
+        # The MCO adds the mc-name-suffix annotation server side
+        merge_dict(
+            resource,
+            {
+                "metadata": {
+                    "annotations": {
+                        "machineconfiguration.openshift.io/mc-name-suffix": ""
+                    }
+                }
+            },
+            overwrite=True
+        )
 
     def normalize_resource_Service(self, resource):
         normalize_Service_V1(resource)
@@ -1534,6 +1660,93 @@ class OpenShiftProvision:
                 command += ['--save-config']
             self.run_oc(command, data=json.dumps(self.resource), check_rc=True)
 
+def record_timing(timing_file, provisioner, action, elapsed, error_class=None,
+                  deferred=False, resource=None):
+    if not timing_file:
+        return
+    if provisioner is not None:
+        resource = provisioner.resource
+    elif resource is not None:
+        resource = resource
+    else:
+        resource = {}
+    metadata = resource.get('metadata', {}) if isinstance(resource, dict) else {}
+    patch_ops = []
+    patch = provisioner.patch if provisioner is not None else None
+    if patch:
+        patch_ops = [
+            "{} {}".format(op.get('op', '?'), op.get('path', '?'))
+            for op in patch[:15]
+        ]
+        if len(patch) > 15:
+            patch_ops.append("... %d more" % (len(patch) - 15))
+    record = {
+        'timestamp': time.time(),
+        'kind': resource.get('kind') if isinstance(resource, dict) else None,
+        'namespace': metadata.get('namespace', ''),
+        'name': metadata.get('name', ''),
+        'action': action,
+        'changed': bool(provisioner.changed) if provisioner is not None else False,
+        'oc_calls': provisioner.oc_calls if provisioner is not None else 0,
+        'oc_seconds': round(provisioner.oc_seconds, 3) if provisioner is not None else 0.0,
+        'elapsed': round(elapsed, 3),
+        'startup_seconds': round(time.monotonic() - PROCESS_START_TIME, 3),
+        'error_class': error_class or 'none',
+        'deferred': bool(deferred),
+        'patch_ops': patch_ops,
+    }
+    try:
+        with open(timing_file, 'a') as f:
+            f.write(json.dumps(record) + '\n')
+    except Exception:
+        pass
+
+
+def resolve_param(resource, annotation, key, default, fallback):
+    """
+    Mirrors the precedence the role's loop variables used to implement with
+    json_query/default chains: resource annotation, then a top level key on
+    the resource, then the caller's default, then a hard fallback
+    """
+    annotations = resource.get('metadata', {}).get('annotations', {}) or {}
+    value = annotations.get(annotation)
+    if value:
+        return value
+    value = resource.get(key)
+    if value:
+        return value
+    if default:
+        return default
+    return fallback
+
+
+def grouped_kind(resource):
+    """The grouped kind (Kind.group, or bare Kind for core resources) that
+    oc uses to address the resource; matches get_grouped_kind()."""
+    kind = resource.get('kind', '') if isinstance(resource, dict) else ''
+    api_version = resource.get('apiVersion', '') if isinstance(resource, dict) else ''
+    if '/' in api_version:
+        return kind + '.' + api_version.split('/')[0]
+    return kind
+
+
+def reduced_resource(resource):
+    """Small identity block for unchanged resource results
+
+    Unchanged results do not need the full definition, keeping them small
+    stops the register variable from accumulating tens of megabytes over a
+    full cluster run
+    """
+    metadata = resource.get('metadata', {}) if isinstance(resource, dict) else {}
+    return {
+        'kind': resource.get('kind') if isinstance(resource, dict) else None,
+        'metadata': {
+            'name': metadata.get('name'),
+            'namespace': metadata.get('namespace', ''),
+        },
+    }
+
+
 def run_module():
     module_args = {
         'action': {
@@ -1555,9 +1768,42 @@ def run_module():
             'required': False,
             'default': {}
         },
+        # Single resource mode (used by the retry path)
         'resource': {
             'type': 'dict',
-            'required': True
+            'required': False
+        },
+        # Batch mode: one module call provisions the whole rendered list.
+        # Per resource failures are returned in results instead of failing
+        # the module, so one bad resource cannot kill its siblings
+        'resources': {
+            'type': 'list',
+            'elements': 'dict',
+            'required': False
+        },
+        # Batch-mode per resource defaults (template / helm chart level)
+        'default_action': {
+            'type': 'str',
+            'required': False
+        },
+        # Kind-availability deferral (two-pass mode, pass 1): skip resources
+        # whose kind is not served by the API yet
+        # pass 2 applies them once the operators have established their CRDs
+        'defer_unavailable_kinds': {
+            'type': 'bool',
+            'required': False,
+            'default': False
+        },
+        # API discovery documents (raw /api/v1 + /apis JSON merged into one
+        # hash with "resources" and "groups" keys)
+        'discovery': {
+            'type': 'dict',
+            'required': False,
+            'default': None
+        },
+        'default_patch_type': {
+            'type': 'str',
+            'required': False
         },
         # Useful when testing...
         'fail_on_change': {
@@ -1577,28 +1823,251 @@ def run_module():
         supports_check_mode=True
     )
 
+    if (module.params.get('resources') is not None) == (module.params.get('resource') is not None):
+        module.fail_json(msg='provide exactly one of resource or resources')
+
+    timing_file = os.environ.get('OPENSHIFT_PROVISION_TIMING_FILE', '')
+
+    if module.params.get('resources') is not None:
+        run_module_batch(module, timing_file)
+        return
+
     provisioner = None
+    start = time.monotonic()
     try:
         provisioner = OpenShiftProvision(module)
         provisioner.provision()
+    except OcError as e:
+        elapsed = time.monotonic() - start
+        result = dict(e.result)
+        result.setdefault('error_class', classify_error(result.get('msg', '')))
+        if result.get('error_class') == 'auth':
+            result['auth_failure'] = True
+        result['traceback'] = traceback.format_exc().split('\n')
+        if provisioner is not None:
+            result['action'] = provisioner.action
+        record_timing(timing_file, provisioner,
+                      provisioner.action if provisioner is not None else None,
+                      elapsed, result.get('error_class'))
+        module.fail_json(**result)
     except Exception as e:
+        elapsed = time.monotonic() - start
         # Do not return the full resource here!
         # This can (and has) exhausted job log limits
+        error_class = classify_error(str(e))
         result = {
             'msg': str(e),
             'traceback': traceback.format_exc().split('\n'),
+            'error_class': error_class,
         }
+        if error_class == 'auth':
+            result['auth_failure'] = True
         if provisioner is not None:
             result['action'] = provisioner.action
-        if is_auth_error(str(e)):
-            result['auth_failure'] = True
+        record_timing(timing_file, provisioner,
+                      provisioner.action if provisioner is not None else None,
+                      elapsed, error_class)
         module.fail_json(**result)
 
+    elapsed = time.monotonic() - start
+    record_timing(timing_file, provisioner, provisioner.action, elapsed)
     module.exit_json(
         action=provisioner.action,
         changed=provisioner.changed,
         patch=provisioner.patch,
-        resource=provisioner.resource
+        resource=provisioner.resource,
+        oc_calls=provisioner.oc_calls,
+        oc_seconds=round(provisioner.oc_seconds, 3)
+    )
+
+
+def run_module_batch(module, timing_file):
+    """Batch mode: provision a whole rendered resource list in one call"""
+    resources = module.params['resources']
+    results = []
+    any_changed = False
+    any_failed = False
+    deferred_count = 0
+    available_kinds = set()
+    discovery = module.params.get('discovery') or {}
+    if discovery:
+        try:
+            for r in discovery.get('resources') or []:
+                k = r.get('kind') if isinstance(r, dict) else None
+                if k:
+                    available_kinds.add(k)
+            for g in discovery.get('groups') or []:
+                for v in g.get('versions') or []:
+                    group = (v.get('groupVersion') or '').split('/')[0]
+                    for r in v.get('resources') or []:
+                        k = r.get('kind') if isinstance(r, dict) else None
+                        if k:
+                            available_kinds.add(k + '.' + group)
+        except Exception:
+            available_kinds = set()
+    core_kinds = {k for k in available_kinds if '.' not in k}
+    grouped_kinds = available_kinds - core_kinds
+    discovery_usable = bool(core_kinds) and bool(grouped_kinds)
+    defer_kinds = (bool(module.params.get('defer_unavailable_kinds'))
+                   and discovery_usable)
+    start = time.monotonic()
+
+    for res in resources:
+        action = resolve_param(res, 'openshift-provision/action', 'action',
+                               module.params.get('default_action'), 'apply')
+        patch_type = resolve_param(res, 'openshift-provision/patch-type', 'patch_type',
+                                   module.params.get('default_patch_type'), 'strategic')
+
+        if action == 'ignore':
+            results.append({
+                'changed': False,
+                'skipped': True,
+                'action': 'ignore',
+                'resource': reduced_resource(res),
+            })
+            continue
+        
+        gk = grouped_kind(res)
+        if defer_kinds and gk not in available_kinds:
+            deferred_count += 1
+            results.append({
+                'deferred': True,
+                'changed': False,
+                'skipped': True,
+                'action': action,
+                'resource': reduced_resource(res),
+            })
+            record_timing(timing_file, None, action, 0.0, 'none',
+                          deferred=True, resource=res)
+            continue
+
+        r_start = time.monotonic()
+        provisioner = None
+        try:
+            provisioner = OpenShiftProvision(
+                module, copy.deepcopy(res), action=action, patch_type=patch_type
+            )
+            provisioner.provision()
+        except OcError as e:
+            error_class = e.result.get('error_class', classify_error(e.result.get('msg', '')))
+            if (error_class == 'notfound'
+                    and action == 'patch'
+                    and module.params.get('defer_unavailable_kinds')):
+                deferred_count += 1
+                results.append({
+                    'deferred': True,
+                    'changed': False,
+                    'skipped': True,
+                    'action': action,
+                    'resource': reduced_resource(res),
+                })
+                record_timing(timing_file, provisioner, action,
+                              time.monotonic() - r_start, 'notfound',
+                              deferred=True, resource=res)
+                continue
+            any_failed = True
+            results.append({
+                'failed': True,
+                'resource': res,
+                'invocation': {'module_args': {
+                    'action': action,
+                    'patch_type': patch_type,
+                    'namespace': module.params.get('namespace'),
+                }},
+                'msg': e.result.get('msg', ''),
+                'error_class': error_class,
+                'auth_failure': error_class == 'auth',
+            })
+            record_timing(timing_file, provisioner, action,
+                          time.monotonic() - r_start, error_class)
+            continue
+        except Exception as e:
+            error_class = classify_error(str(e))
+            if (error_class == 'notfound'
+                    and action == 'patch'
+                    and module.params.get('defer_unavailable_kinds')):
+                deferred_count += 1
+                results.append({
+                    'deferred': True,
+                    'changed': False,
+                    'skipped': True,
+                    'action': action,
+                    'resource': reduced_resource(res),
+                })
+                record_timing(timing_file, provisioner, action,
+                              time.monotonic() - r_start, 'notfound',
+                              deferred=True, resource=res)
+                continue
+            any_failed = True
+            results.append({
+                'failed': True,
+                'resource': res,
+                'invocation': {'module_args': {
+                    'action': action,
+                    'patch_type': patch_type,
+                    'namespace': module.params.get('namespace'),
+                }},
+                'msg': str(e),
+                'error_class': error_class,
+                'auth_failure': error_class == 'auth',
+            })
+            record_timing(timing_file, provisioner, action,
+                          time.monotonic() - r_start, error_class)
+            continue
+
+        any_changed = any_changed or bool(provisioner.changed)
+        if provisioner.changed:
+            # Changed resources keep the full final definition
+            result_resource = provisioner.resource
+        else:
+            result_resource = reduced_resource(res)
+        results.append({
+            'changed': bool(provisioner.changed),
+            'action': provisioner.action,
+            'patch': provisioner.patch,
+            'resource': result_resource,
+        })
+        record_timing(timing_file, provisioner, provisioner.action,
+                      time.monotonic() - r_start)
+
+    elapsed = time.monotonic() - start
+    record = {
+        'timestamp': time.time(),
+        'kind': 'Batch',
+        'namespace': '',
+        'name': '%d resources' % len(resources),
+        'action': 'batch',
+        'changed': any_changed,
+        'deferred_count': deferred_count,
+        'available_kinds_count': len(available_kinds),
+        'available_core_kinds_count': len(core_kinds),
+        'available_grouped_kinds_count': len(grouped_kinds),
+        'oc_calls': 0,
+        'oc_seconds': 0.0,
+        'elapsed': round(elapsed, 3),
+        'startup_seconds': 0.0,
+        'error_class': 'none',
+        'patch_ops': [],
+    }
+    try:
+        if timing_file:
+            with open(timing_file, 'a') as f:
+                f.write(json.dumps(record) + '\n')
+    except Exception:
+        pass
+
+    module.exit_json(
+        action='batch',
+        changed=any_changed,
+        failed=any_failed,
+        failure_count=sum(1 for r in results if r.get('failed')),
+        deferred_count=deferred_count,
+        available_kinds_count=len(available_kinds),
+        available_core_kinds_count=len(core_kinds),
+        available_grouped_kinds_count=len(grouped_kinds),
+        discovery_usable=discovery_usable,
+        defer_enabled=defer_kinds,
+        results=results,
     )
 
 def main():
